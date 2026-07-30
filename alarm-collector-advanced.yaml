@@ -1,0 +1,920 @@
+substitutions:
+  device_name: alarm-contact-collector
+  friendly_name: "Alarm Contact Collector"
+  central_1_name: "Centrale 1"
+  central_2_name: "Centrale 2"
+  brevo_sender_email: !secret brevo_sender_email
+  brevo_sender_name: !secret brevo_sender_name
+  brevo_recipient_email: !secret brevo_recipient_email
+  brevo_recipient_name: !secret brevo_recipient_name
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  min_version: 2026.7.0
+  compile_process_limit: 1
+  project:
+    name: "roberto.alarm-contact-collector"
+    version: "0.4.0"
+  on_boot:
+    priority: -100
+    then:
+      - switch.turn_off: relay_1_internal
+      - switch.turn_off: relay_2_internal
+      - switch.turn_off: relay_3_internal
+      - switch.turn_off: relay_4_internal
+      - switch.turn_off: relay_5_internal
+      - switch.turn_off: relay_6_internal
+      - switch.turn_off: relay_7_internal
+      - switch.turn_off: relay_8_internal
+      - pcf85063.read_time:
+      - text_sensor.template.publish:
+          id: telegram_status
+          state: "Nessun invio"
+      - text_sensor.template.publish:
+          id: brevo_status
+          state: "Nessun invio"
+      - script.execute: update_status_led
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: ESP32S3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: INFO
+  hardware_uart: USB_SERIAL_JTAG
+
+api:
+  id: native_api
+  encryption:
+    key: !secret api_encryption_key
+  reboot_timeout: 0s
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+safe_mode:
+  boot_is_good_after: 1min
+  num_attempts: 5
+
+web_server:
+  port: 80
+  version: 3
+  local: true
+  log: false
+
+ethernet:
+  id: eth
+  type: W5500
+  clk_pin: GPIO15
+  mosi_pin: GPIO13
+  miso_pin: GPIO14
+  cs_pin: GPIO16
+  interrupt_pin: GPIO12
+  clock_speed: 26.67MHz
+  on_connect:
+    then:
+      - script.execute: update_status_led
+      - if:
+          condition:
+            lambda: return !id(ethernet_ever_connected);
+          then:
+            - lambda: id(ethernet_ever_connected) = true;
+            - delay: 2s
+            - if:
+                condition:
+                  switch.is_on: telegram_enabled
+                then:
+                  - script.execute:
+                      id: telegram_send
+                      event_name: "Avvio"
+                      telegram_text: "🟢 Alarm Contact Collector avviato e collegato alla rete."
+            - if:
+                condition:
+                  switch.is_on: brevo_enabled
+                then:
+                  - script.execute:
+                      id: brevo_send
+                      subject: "Alarm Contact Collector avviato"
+                      message: "Il concentratore allarmi è avviato e collegato alla rete."
+                      event_name: "Avvio"
+          else:
+            - if:
+                condition:
+                  lambda: return id(ethernet_lost);
+                then:
+                  - lambda: id(ethernet_lost) = false;
+                  - if:
+                      condition:
+                        switch.is_on: telegram_enabled
+                      then:
+                        - script.execute:
+                            id: telegram_send
+                            event_name: "Ethernet ripristinata"
+                            telegram_text: "🟢 Connessione Ethernet ripristinata."
+                  - if:
+                      condition:
+                        switch.is_on: brevo_enabled
+                      then:
+                        - script.execute:
+                            id: brevo_send
+                            subject: "Ethernet ripristinata"
+                            message: "La connessione Ethernet del concentratore è stata ripristinata."
+                            event_name: "Ethernet ripristinata"
+  on_disconnect:
+    then:
+      - if:
+          condition:
+            lambda: return id(ethernet_ever_connected);
+          then:
+            - lambda: id(ethernet_lost) = true;
+      - script.execute: update_status_led
+
+http_request:
+  id: notification_http
+  timeout: 10s
+  verify_ssl: true
+  follow_redirects: true
+
+i2c:
+  id: main_i2c
+  sda: GPIO42
+  scl: GPIO41
+  scan: true
+  frequency: 100kHz
+
+pca9554:
+  - id: relay_expander
+    address: 0x20
+    pin_count: 8
+
+time:
+  - platform: pcf85063
+    id: board_rtc
+    i2c_id: main_i2c
+    address: 0x51
+    update_interval: never
+  - platform: homeassistant
+    id: ha_time
+    timezone: Europe/Rome
+    on_time_sync:
+      then:
+        - pcf85063.write_time:
+            id: board_rtc
+
+globals:
+  - id: ethernet_ever_connected
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: ethernet_lost
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: ha_ever_connected
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: ha_connection_lost
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: alarm_1_memory_value
+    type: bool
+    restore_value: true
+    initial_value: "false"
+  - id: alarm_2_memory_value
+    type: bool
+    restore_value: true
+    initial_value: "false"
+  - id: alarm_1_count_value
+    type: int
+    restore_value: true
+    initial_value: "0"
+  - id: alarm_2_count_value
+    type: int
+    restore_value: true
+    initial_value: "0"
+  - id: alarm_1_started
+    type: int64_t
+    restore_value: false
+    initial_value: "0"
+  - id: alarm_2_started
+    type: int64_t
+    restore_value: false
+    initial_value: "0"
+  - id: alarm_1_last_duration
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: alarm_2_last_duration
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: alarm_1_last_event_value
+    type: std::string
+    restore_value: true
+    max_restore_data_length: 64
+    initial_value: '"Mai"'
+  - id: alarm_2_last_event_value
+    type: std::string
+    restore_value: true
+    max_restore_data_length: 64
+    initial_value: '"Mai"'
+
+select:
+  - platform: template
+    id: alarm_1_logic
+    name: "${central_1_name} - Logica contatto"
+    icon: mdi:electric-switch
+    options: ["NC", "NO"]
+    initial_option: "NC"
+    optimistic: true
+    restore_value: true
+  - platform: template
+    id: alarm_2_logic
+    name: "${central_2_name} - Logica contatto"
+    icon: mdi:electric-switch
+    options: ["NC", "NO"]
+    initial_option: "NC"
+    optimistic: true
+    restore_value: true
+
+switch:
+  - platform: template
+    id: alarm_1_excluded
+    name: "${central_1_name} - Esclusione"
+    icon: mdi:shield-off-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - script.execute: update_status_led
+    on_turn_off:
+      - script.execute: update_status_led
+  - platform: template
+    id: alarm_2_excluded
+    name: "${central_2_name} - Esclusione"
+    icon: mdi:shield-off-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - script.execute: update_status_led
+    on_turn_off:
+      - script.execute: update_status_led
+  - platform: template
+    id: buzzer_enabled
+    name: "Buzzer abilitato"
+    icon: mdi:volume-high
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+  - platform: template
+    id: telegram_enabled
+    name: "Notifiche Telegram abilitate"
+    icon: mdi:send
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+  - platform: template
+    id: brevo_enabled
+    name: "Notifiche email Brevo abilitate"
+    icon: mdi:email-fast-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  # Uscite fisiche mantenute interne e sempre spente in questo firmware.
+  - platform: gpio
+    id: relay_1_internal
+    internal: true
+    restore_mode: ALWAYS_OFF
+    pin: {pca9554: relay_expander, number: 0, mode: {output: true}}
+  - platform: gpio
+    id: relay_2_internal
+    internal: true
+    restore_mode: ALWAYS_OFF
+    pin: {pca9554: relay_expander, number: 1, mode: {output: true}}
+  - platform: gpio
+    id: relay_3_internal
+    internal: true
+    restore_mode: ALWAYS_OFF
+    pin: {pca9554: relay_expander, number: 2, mode: {output: true}}
+  - platform: gpio
+    id: relay_4_internal
+    internal: true
+    restore_mode: ALWAYS_OFF
+    pin: {pca9554: relay_expander, number: 3, mode: {output: true}}
+  - platform: gpio
+    id: relay_5_internal
+    internal: true
+    restore_mode: ALWAYS_OFF
+    pin: {pca9554: relay_expander, number: 4, mode: {output: true}}
+  - platform: gpio
+    id: relay_6_internal
+    internal: true
+    restore_mode: ALWAYS_OFF
+    pin: {pca9554: relay_expander, number: 5, mode: {output: true}}
+  - platform: gpio
+    id: relay_7_internal
+    internal: true
+    restore_mode: ALWAYS_OFF
+    pin: {pca9554: relay_expander, number: 6, mode: {output: true}}
+  - platform: gpio
+    id: relay_8_internal
+    internal: true
+    restore_mode: ALWAYS_OFF
+    pin: {pca9554: relay_expander, number: 7, mode: {output: true}}
+
+binary_sensor:
+  # Lo stato fisico indica contatto CHIUSO, indipendentemente dalla logica NO/NC.
+  - platform: gpio
+    id: contact_1_closed
+    name: "${central_1_name} - Contatto fisico"
+    entity_category: diagnostic
+    pin: {number: GPIO4, mode: {input: true, pullup: true}, inverted: true}
+    filters: &contact_filters [{delayed_on: 50ms}, {delayed_off: 50ms}]
+  - platform: gpio
+    id: contact_2_closed
+    name: "${central_2_name} - Contatto fisico"
+    entity_category: diagnostic
+    pin: {number: GPIO5, mode: {input: true, pullup: true}, inverted: true}
+    filters: *contact_filters
+
+  - platform: template
+    id: alarm_1
+    name: "${central_1_name} - Allarme"
+    device_class: problem
+    lambda: |-
+      if (id(alarm_1_excluded).state) return false;
+      const bool closed = id(contact_1_closed).state;
+      return id(alarm_1_logic).current_option() == "NO" ? closed : !closed;
+    filters:
+      - delayed_on: 300ms
+      - delayed_off: 1s
+    on_press:
+      - script.execute: alarm_1_activated
+    on_release:
+      - script.execute: alarm_1_restored
+  - platform: template
+    id: alarm_2
+    name: "${central_2_name} - Allarme"
+    device_class: problem
+    lambda: |-
+      if (id(alarm_2_excluded).state) return false;
+      const bool closed = id(contact_2_closed).state;
+      return id(alarm_2_logic).current_option() == "NO" ? closed : !closed;
+    filters:
+      - delayed_on: 300ms
+      - delayed_off: 1s
+    on_press:
+      - script.execute: alarm_2_activated
+    on_release:
+      - script.execute: alarm_2_restored
+
+  - platform: template
+    id: alarm_1_memory
+    name: "${central_1_name} - Memoria allarme"
+    device_class: problem
+    lambda: return id(alarm_1_memory_value);
+  - platform: template
+    id: alarm_2_memory
+    name: "${central_2_name} - Memoria allarme"
+    device_class: problem
+    lambda: return id(alarm_2_memory_value);
+  - platform: template
+    id: any_alarm
+    name: "Allarme generale"
+    device_class: safety
+    lambda: return id(alarm_1).state || id(alarm_2).state;
+  - platform: template
+    id: any_memory
+    name: "Memoria allarme generale"
+    device_class: problem
+    lambda: return id(alarm_1_memory_value) || id(alarm_2_memory_value);
+  - platform: template
+    id: ha_connected
+    name: "Home Assistant collegato"
+    entity_category: diagnostic
+    lambda: return id(native_api).is_connected();
+    filters:
+      - delayed_on: 5s
+      - delayed_off: 30s
+    on_press:
+      - if:
+          condition:
+            lambda: return id(ha_connection_lost);
+          then:
+            - lambda: id(ha_connection_lost) = false;
+            - if:
+                condition:
+                  switch.is_on: telegram_enabled
+                then:
+                  - script.execute:
+                      id: telegram_send
+                      event_name: "Home Assistant ripristinato"
+                      telegram_text: "🟢 Collegamento Home Assistant ripristinato."
+            - if:
+                condition:
+                  switch.is_on: brevo_enabled
+                then:
+                  - script.execute:
+                      id: brevo_send
+                      subject: "Home Assistant ripristinato"
+                      message: "Il collegamento del concentratore a Home Assistant è stato ripristinato."
+                      event_name: "Home Assistant ripristinato"
+      - lambda: id(ha_ever_connected) = true;
+    on_release:
+      - if:
+          condition:
+            lambda: return id(ha_ever_connected);
+          then:
+            - lambda: id(ha_connection_lost) = true;
+            - if:
+                condition:
+                  switch.is_on: telegram_enabled
+                then:
+                  - script.execute:
+                      id: telegram_send
+                      event_name: "Home Assistant scollegato"
+                      telegram_text: "🟠 Collegamento Home Assistant assente da almeno 30 secondi."
+            - if:
+                condition:
+                  switch.is_on: brevo_enabled
+                then:
+                  - script.execute:
+                      id: brevo_send
+                      subject: "Home Assistant scollegato"
+                      message: "Il collegamento del concentratore a Home Assistant è assente da almeno 30 secondi."
+                      event_name: "Home Assistant scollegato"
+
+  # Sei contatti pronti per espansioni successive.
+  - platform: gpio
+    name: "Ingresso riserva 3"
+    disabled_by_default: true
+    pin: {number: GPIO6, mode: {input: true, pullup: true}, inverted: true}
+    filters: *contact_filters
+  - platform: gpio
+    name: "Ingresso riserva 4"
+    disabled_by_default: true
+    pin: {number: GPIO7, mode: {input: true, pullup: true}, inverted: true}
+    filters: *contact_filters
+  - platform: gpio
+    name: "Ingresso riserva 5"
+    disabled_by_default: true
+    pin: {number: GPIO8, mode: {input: true, pullup: true}, inverted: true}
+    filters: *contact_filters
+  - platform: gpio
+    name: "Ingresso riserva 6"
+    disabled_by_default: true
+    pin: {number: GPIO9, mode: {input: true, pullup: true}, inverted: true}
+    filters: *contact_filters
+  - platform: gpio
+    name: "Ingresso riserva 7"
+    disabled_by_default: true
+    pin: {number: GPIO10, mode: {input: true, pullup: true}, inverted: true}
+    filters: *contact_filters
+  - platform: gpio
+    name: "Ingresso riserva 8"
+    disabled_by_default: true
+    pin: {number: GPIO11, mode: {input: true, pullup: true}, inverted: true}
+    filters: *contact_filters
+
+output:
+  - platform: ledc
+    id: buzzer_output
+    pin: GPIO46
+    frequency: 2000Hz
+
+rtttl:
+  id: board_buzzer
+  output: buzzer_output
+  gain: 60%
+
+light:
+  - platform: esp32_rmt_led_strip
+    id: status_rgb
+    name: "LED di stato"
+    pin: GPIO38
+    num_leds: 1
+    rgb_order: RGB
+    chipset: WS2812
+    restore_mode: ALWAYS_OFF
+    effects:
+      - pulse:
+          name: "Allarme"
+          transition_length: 250ms
+          update_interval: 250ms
+
+sensor:
+  - platform: template
+    id: alarm_1_count
+    name: "${central_1_name} - Numero allarmi"
+    icon: mdi:counter
+    accuracy_decimals: 0
+    lambda: return id(alarm_1_count_value);
+    update_interval: 5s
+  - platform: template
+    id: alarm_2_count
+    name: "${central_2_name} - Numero allarmi"
+    icon: mdi:counter
+    accuracy_decimals: 0
+    lambda: return id(alarm_2_count_value);
+    update_interval: 5s
+  - platform: template
+    id: alarm_1_duration
+    name: "${central_1_name} - Durata allarme"
+    device_class: duration
+    unit_of_measurement: s
+    accuracy_decimals: 0
+    lambda: |-
+      if (id(alarm_1).state && id(alarm_1_started) > 0) {
+        return id(board_rtc).now().timestamp - id(alarm_1_started);
+      }
+      return id(alarm_1_last_duration);
+    update_interval: 1s
+  - platform: template
+    id: alarm_2_duration
+    name: "${central_2_name} - Durata allarme"
+    device_class: duration
+    unit_of_measurement: s
+    accuracy_decimals: 0
+    lambda: |-
+      if (id(alarm_2).state && id(alarm_2_started) > 0) {
+        return id(board_rtc).now().timestamp - id(alarm_2_started);
+      }
+      return id(alarm_2_last_duration);
+    update_interval: 1s
+  - platform: uptime
+    name: "Uptime"
+    entity_category: diagnostic
+    update_interval: 30s
+  - platform: internal_temperature
+    name: "Temperatura ESP32"
+    entity_category: diagnostic
+    update_interval: 30s
+
+text_sensor:
+  - platform: template
+    name: "${central_1_name} - Stato"
+    icon: mdi:shield-alert-outline
+    lambda: |-
+      if (id(alarm_1_excluded).state) return {"Escluso"};
+      if (id(alarm_1).state) return {"Allarme"};
+      if (id(alarm_1_memory_value)) return {"Ripristinato - memoria presente"};
+      return {"Normale"};
+    update_interval: 1s
+  - platform: template
+    name: "${central_2_name} - Stato"
+    icon: mdi:shield-alert-outline
+    lambda: |-
+      if (id(alarm_2_excluded).state) return {"Escluso"};
+      if (id(alarm_2).state) return {"Allarme"};
+      if (id(alarm_2_memory_value)) return {"Ripristinato - memoria presente"};
+      return {"Normale"};
+    update_interval: 1s
+  - platform: template
+    name: "${central_1_name} - Ultima attivazione"
+    icon: mdi:clock-alert-outline
+    lambda: return id(alarm_1_last_event_value);
+    update_interval: 5s
+  - platform: template
+    name: "${central_2_name} - Ultima attivazione"
+    icon: mdi:clock-alert-outline
+    lambda: return id(alarm_2_last_event_value);
+    update_interval: 5s
+  - platform: template
+    id: telegram_status
+    name: "Ultimo invio Telegram"
+    entity_category: diagnostic
+    lambda: return {"Nessun invio"};
+    update_interval: never
+  - platform: template
+    id: brevo_status
+    name: "Ultimo invio email Brevo"
+    entity_category: diagnostic
+    lambda: return {"Nessun invio"};
+    update_interval: never
+  - platform: ethernet_info
+    ip_address:
+      name: "Indirizzo IP Ethernet"
+      entity_category: diagnostic
+    mac_address:
+      name: "MAC Ethernet"
+      entity_category: diagnostic
+  - platform: version
+    name: "Versione ESPHome"
+    entity_category: diagnostic
+
+button:
+  - platform: template
+    name: "Tacita buzzer"
+    icon: mdi:volume-off
+    on_press:
+      - rtttl.stop:
+  - platform: template
+    name: "Cancella tutte le memorie"
+    icon: mdi:notification-clear-all
+    on_press:
+      - if:
+          condition:
+            lambda: return !id(alarm_1).state && !id(alarm_2).state;
+          then:
+            - lambda: |-
+                id(alarm_1_memory_value) = false;
+                id(alarm_2_memory_value) = false;
+            - script.execute: update_status_led
+          else:
+            - logger.log:
+                level: WARN
+                format: "Memoria non cancellata: almeno un allarme è ancora attivo"
+  - platform: template
+    name: "Test Telegram diretto"
+    icon: mdi:send-check
+    on_press:
+      - script.execute: telegram_test
+  - platform: template
+    name: "Test email Brevo"
+    icon: mdi:email-check-outline
+    on_press:
+      - script.execute:
+          id: brevo_send
+          subject: "Test Alarm Contact Collector"
+          message: "Test email Brevo ricevuto correttamente."
+          event_name: "Test"
+  - platform: restart
+    name: "Riavvia concentratore"
+    entity_category: diagnostic
+  - platform: safe_mode
+    name: "Riavvia in modalità sicura"
+    entity_category: diagnostic
+
+interval:
+  - interval: 5s
+    then:
+      - script.execute: update_status_led
+
+script:
+  - id: alarm_1_activated
+    mode: restart
+    then:
+      - lambda: |-
+          auto now = id(board_rtc).now();
+          id(alarm_1_memory_value) = true;
+          id(alarm_1_count_value) += 1;
+          id(alarm_1_started) = now.is_valid() ? now.timestamp : 0;
+          id(alarm_1_last_event_value) =
+            now.is_valid() ? now.strftime("%d/%m/%Y %H:%M:%S") : "Ora non disponibile";
+      - component.update: alarm_1_count
+      - script.execute: update_status_led
+      - if:
+          condition:
+            switch.is_on: buzzer_enabled
+          then:
+            - rtttl.play: "alarm:d=8,o=6,b=180:c7,p,c7,p,c7,p,c7"
+      - if:
+          condition:
+            switch.is_on: telegram_enabled
+          then:
+            - script.execute:
+                id: telegram_send
+                event_name: "Allarme 1"
+                telegram_text: "🚨 ALLARME - ${central_1_name}"
+      - if:
+          condition:
+            switch.is_on: brevo_enabled
+          then:
+            - script.execute:
+                id: brevo_send
+                subject: "ALLARME - ${central_1_name}"
+                message: "Allarme attivo su ${central_1_name}."
+                event_name: "Allarme 1"
+  - id: alarm_2_activated
+    mode: restart
+    then:
+      - lambda: |-
+          auto now = id(board_rtc).now();
+          id(alarm_2_memory_value) = true;
+          id(alarm_2_count_value) += 1;
+          id(alarm_2_started) = now.is_valid() ? now.timestamp : 0;
+          id(alarm_2_last_event_value) =
+            now.is_valid() ? now.strftime("%d/%m/%Y %H:%M:%S") : "Ora non disponibile";
+      - component.update: alarm_2_count
+      - script.execute: update_status_led
+      - if:
+          condition:
+            switch.is_on: buzzer_enabled
+          then:
+            - rtttl.play: "alarm:d=8,o=6,b=180:c7,p,c7,p,c7,p,c7"
+      - if:
+          condition:
+            switch.is_on: telegram_enabled
+          then:
+            - script.execute:
+                id: telegram_send
+                event_name: "Allarme 2"
+                telegram_text: "🚨 ALLARME - ${central_2_name}"
+      - if:
+          condition:
+            switch.is_on: brevo_enabled
+          then:
+            - script.execute:
+                id: brevo_send
+                subject: "ALLARME - ${central_2_name}"
+                message: "Allarme attivo su ${central_2_name}."
+                event_name: "Allarme 2"
+  - id: alarm_1_restored
+    mode: restart
+    then:
+      - lambda: |-
+          auto now = id(board_rtc).now();
+          if (id(alarm_1_started) > 0 && now.is_valid()) {
+            id(alarm_1_last_duration) = now.timestamp - id(alarm_1_started);
+          }
+          id(alarm_1_started) = 0;
+      - script.execute: update_status_led
+      - if:
+          condition:
+            switch.is_on: telegram_enabled
+          then:
+            - script.execute:
+                id: telegram_send
+                event_name: "Ripristino 1"
+                telegram_text: "✅ RIPRISTINO - ${central_1_name}"
+      - if:
+          condition:
+            switch.is_on: brevo_enabled
+          then:
+            - script.execute:
+                id: brevo_send
+                subject: "RIPRISTINO - ${central_1_name}"
+                message: "Allarme ripristinato su ${central_1_name}."
+                event_name: "Ripristino 1"
+  - id: alarm_2_restored
+    mode: restart
+    then:
+      - lambda: |-
+          auto now = id(board_rtc).now();
+          if (id(alarm_2_started) > 0 && now.is_valid()) {
+            id(alarm_2_last_duration) = now.timestamp - id(alarm_2_started);
+          }
+          id(alarm_2_started) = 0;
+      - script.execute: update_status_led
+      - if:
+          condition:
+            switch.is_on: telegram_enabled
+          then:
+            - script.execute:
+                id: telegram_send
+                event_name: "Ripristino 2"
+                telegram_text: "✅ RIPRISTINO - ${central_2_name}"
+      - if:
+          condition:
+            switch.is_on: brevo_enabled
+          then:
+            - script.execute:
+                id: brevo_send
+                subject: "RIPRISTINO - ${central_2_name}"
+                message: "Allarme ripristinato su ${central_2_name}."
+                event_name: "Ripristino 2"
+
+  - id: update_status_led
+    mode: restart
+    then:
+      - if:
+          condition:
+            binary_sensor.is_on: any_alarm
+          then:
+            - light.turn_on:
+                id: status_rgb
+                brightness: 50%
+                red: 100%
+                green: 0%
+                blue: 0%
+                effect: "Allarme"
+          else:
+            - if:
+                condition:
+                  binary_sensor.is_on: any_memory
+                then:
+                  - light.turn_on:
+                      id: status_rgb
+                      brightness: 35%
+                      red: 100%
+                      green: 45%
+                      blue: 0%
+                      effect: none
+                else:
+                  - if:
+                      condition:
+                        or:
+                          - switch.is_on: alarm_1_excluded
+                          - switch.is_on: alarm_2_excluded
+                      then:
+                        - light.turn_on:
+                            id: status_rgb
+                            brightness: 35%
+                            red: 65%
+                            green: 0%
+                            blue: 100%
+                            effect: none
+                      else:
+                        - if:
+                            condition:
+                              not:
+                                api.connected:
+                                  state_subscription_only: true
+                            then:
+                              - light.turn_on:
+                                  id: status_rgb
+                                  brightness: 25%
+                                  red: 0%
+                                  green: 20%
+                                  blue: 100%
+                                  effect: none
+                            else:
+                              - light.turn_on:
+                                  id: status_rgb
+                                  brightness: 25%
+                                  red: 0%
+                                  green: 100%
+                                  blue: 0%
+                                  effect: none
+
+  - id: telegram_send
+    mode: queued
+    max_runs: 8
+    parameters:
+      event_name: string
+      telegram_text: string
+    then:
+      - http_request.post:
+          url: !secret telegram_send_url
+          capture_response: true
+          max_response_buffer_size: 512
+          request_headers:
+            accept: "application/json"
+            Content-Type: "application/json"
+          json:
+            chat_id: !secret telegram_chat_id
+            text: !lambda return telegram_text;
+          on_response:
+            then:
+              - lambda: |-
+                  std::string detail = body;
+                  if (detail.length() > 180) detail.resize(180);
+                  char status[256];
+                  snprintf(status, sizeof(status), "%s: HTTP %d - %s",
+                           event_name.c_str(), response->status_code, detail.c_str());
+                  id(telegram_status).publish_state(status);
+                  ESP_LOGI("telegram", "%s", status);
+          on_error:
+            then:
+              - lambda: |-
+                  id(telegram_status).publish_state(
+                    std::string("Errore connessione - ") + event_name);
+  - id: telegram_test
+    mode: restart
+    then:
+      - script.execute:
+          id: telegram_send
+          event_name: "Test"
+          telegram_text: "✅ Test Alarm Contact Collector ricevuto correttamente."
+
+  - id: brevo_send
+    mode: queued
+    max_runs: 5
+    parameters:
+      subject: string
+      message: string
+      event_name: string
+    then:
+      - http_request.post:
+          url: "https://api.brevo.com/v3/smtp/email"
+          request_headers:
+            accept: "application/json"
+            api-key: !secret brevo_api_key
+            Content-Type: "application/json"
+          json: |-
+            root["sender"]["name"] = "${brevo_sender_name}";
+            root["sender"]["email"] = "${brevo_sender_email}";
+            root["to"][0]["name"] = "${brevo_recipient_name}";
+            root["to"][0]["email"] = "${brevo_recipient_email}";
+            root["subject"] = subject;
+            root["textContent"] = message;
+          on_response:
+            then:
+              - lambda: |-
+                  char result[96];
+                  snprintf(result, sizeof(result), "%s: HTTP %d",
+                           event_name.c_str(), response->status_code);
+                  id(brevo_status).publish_state(result);
+          on_error:
+            then:
+              - lambda: |-
+                  id(brevo_status).publish_state(
+                    std::string("Errore invio - ") + event_name);
