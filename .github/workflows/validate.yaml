@@ -1,0 +1,22 @@
+name: Validate ESPHome
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        yaml:
+          - waveshare-8di-8ro-test.yaml
+          - alarm-collector-advanced.yaml
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create CI secrets
+        run: cp secrets.example.yaml secrets.yaml
+      - name: Compile
+        uses: esphome/build-action@v7.0.0
+        with:
+          yaml-file: ${{ matrix.yaml }}
