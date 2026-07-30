@@ -316,4 +316,8 @@ text_sensor:
       entity_category: diagnostic
     mac_address:
       name: "MAC Ethernet"
-      entity_cate
+      entity_category: diagnostic
+
+  - platform: version
+    name: "Versione ESPHome"
+    entity_category: diagnostic
