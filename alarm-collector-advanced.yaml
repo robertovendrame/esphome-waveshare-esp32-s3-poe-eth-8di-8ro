@@ -40,10 +40,9 @@ esphome:
       - lambda: id(startup_complete) = true;
 
 external_components:
-  - source:
-      type: local
-      path: components
+  - source: github://robertovendrame/esphome-waveshare-esp32-s3-poe-eth-8di-8ro@main
     components: [event_history]
+    refresh: 0s
 
 esp32:
   board: esp32-s3-devkitc-1
