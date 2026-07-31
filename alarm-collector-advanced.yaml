@@ -15,7 +15,7 @@ esphome:
   compile_process_limit: 1
   project:
     name: "roberto.alarm-contact-collector"
-    version: "0.4.0"
+    version: "0.5.0"
   on_boot:
     priority: -100
     then:
@@ -28,6 +28,7 @@ esphome:
       - switch.turn_off: relay_7_internal
       - switch.turn_off: relay_8_internal
       - pcf85063.read_time:
+      - lambda: id(event_log).log_boot();
       - text_sensor.template.publish:
           id: telegram_status
           state: "Nessun invio"
@@ -35,11 +36,24 @@ esphome:
           id: brevo_status
           state: "Nessun invio"
       - script.execute: update_status_led
+      - delay: 5s
+      - lambda: id(startup_complete) = true;
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [event_history]
 
 esp32:
   board: esp32-s3-devkitc-1
   variant: ESP32S3
   flash_size: 16MB
+  partitions:
+    - name: event_log
+      type: data
+      subtype: nvs
+      size: 0x20000
   framework:
     type: esp-idf
 
@@ -71,6 +85,12 @@ web_server:
   local: true
   log: false
 
+event_history:
+  id: event_log
+  time_id: board_rtc
+  max_events: 500
+  partition: event_log
+
 ethernet:
   id: eth
   type: W5500
@@ -88,6 +108,7 @@ ethernet:
             lambda: return !id(ethernet_ever_connected);
           then:
             - lambda: id(ethernet_ever_connected) = true;
+            - lambda: id(event_log).log_event("RETE", "Ethernet collegata");
             - delay: 2s
             - if:
                 condition:
@@ -112,6 +133,7 @@ ethernet:
                   lambda: return id(ethernet_lost);
                 then:
                   - lambda: id(ethernet_lost) = false;
+                  - lambda: id(event_log).log_event("RETE", "Connessione Ethernet ripristinata");
                   - if:
                       condition:
                         switch.is_on: telegram_enabled
@@ -137,6 +159,12 @@ ethernet:
           then:
             - lambda: id(ethernet_lost) = true;
       - script.execute: update_status_led
+      - delay: 10s
+      - if:
+          condition:
+            lambda: return id(ethernet_lost);
+          then:
+            - lambda: id(event_log).log_event("RETE", "Ethernet assente da almeno 10 secondi");
 
 http_request:
   id: notification_http
@@ -171,6 +199,10 @@ time:
             id: board_rtc
 
 globals:
+  - id: startup_complete
+    type: bool
+    restore_value: false
+    initial_value: "false"
   - id: ethernet_ever_connected
     type: bool
     restore_value: false
@@ -239,6 +271,12 @@ select:
     initial_option: "NC"
     optimistic: true
     restore_value: true
+    on_value:
+      - if:
+          condition:
+            lambda: return id(startup_complete);
+          then:
+            - lambda: id(event_log).log_event("CONFIG", std::string("${central_1_name} impostata come ") + x);
   - platform: template
     id: alarm_2_logic
     name: "${central_2_name} - Logica contatto"
@@ -247,6 +285,12 @@ select:
     initial_option: "NC"
     optimistic: true
     restore_value: true
+    on_value:
+      - if:
+          condition:
+            lambda: return id(startup_complete);
+          then:
+            - lambda: id(event_log).log_event("CONFIG", std::string("${central_2_name} impostata come ") + x);
 
 switch:
   - platform: template
@@ -256,8 +300,18 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
     on_turn_on:
+      - if:
+          condition:
+            lambda: return id(startup_complete);
+          then:
+            - lambda: id(event_log).log_event("CONFIG", "${central_1_name} esclusa");
       - script.execute: update_status_led
     on_turn_off:
+      - if:
+          condition:
+            lambda: return id(startup_complete);
+          then:
+            - lambda: id(event_log).log_event("CONFIG", "${central_1_name} riattivata");
       - script.execute: update_status_led
   - platform: template
     id: alarm_2_excluded
@@ -266,8 +320,18 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
     on_turn_on:
+      - if:
+          condition:
+            lambda: return id(startup_complete);
+          then:
+            - lambda: id(event_log).log_event("CONFIG", "${central_2_name} esclusa");
       - script.execute: update_status_led
     on_turn_off:
+      - if:
+          condition:
+            lambda: return id(startup_complete);
+          then:
+            - lambda: id(event_log).log_event("CONFIG", "${central_2_name} riattivata");
       - script.execute: update_status_led
   - platform: template
     id: buzzer_enabled
@@ -410,6 +474,7 @@ binary_sensor:
             lambda: return id(ha_connection_lost);
           then:
             - lambda: id(ha_connection_lost) = false;
+            - lambda: id(event_log).log_event("HOME ASSISTANT", "Collegamento ripristinato");
             - if:
                 condition:
                   switch.is_on: telegram_enabled
@@ -434,6 +499,7 @@ binary_sensor:
             lambda: return id(ha_ever_connected);
           then:
             - lambda: id(ha_connection_lost) = true;
+            - lambda: id(event_log).log_event("HOME ASSISTANT", "Collegamento assente da almeno 30 secondi");
             - if:
                 condition:
                   switch.is_on: telegram_enabled
@@ -616,6 +682,7 @@ button:
     icon: mdi:volume-off
     on_press:
       - rtttl.stop:
+      - lambda: id(event_log).log_event("COMANDO", "Buzzer tacitato");
   - platform: template
     name: "Cancella tutte le memorie"
     icon: mdi:notification-clear-all
@@ -627,11 +694,14 @@ button:
             - lambda: |-
                 id(alarm_1_memory_value) = false;
                 id(alarm_2_memory_value) = false;
+                id(event_log).log_event("COMANDO", "Memorie allarme cancellate");
             - script.execute: update_status_led
           else:
             - logger.log:
                 level: WARN
                 format: "Memoria non cancellata: almeno un allarme è ancora attivo"
+            - lambda: |-
+                id(event_log).log_event("COMANDO", "Cancellazione memorie rifiutata: allarme attivo");
   - platform: template
     name: "Test Telegram diretto"
     icon: mdi:send-check
@@ -670,6 +740,7 @@ script:
           id(alarm_1_last_event_value) =
             now.is_valid() ? now.strftime("%d/%m/%Y %H:%M:%S") : "Ora non disponibile";
       - component.update: alarm_1_count
+      - lambda: id(event_log).log_event("ALLARME", "${central_1_name} attivata");
       - script.execute: update_status_led
       - if:
           condition:
@@ -704,6 +775,7 @@ script:
           id(alarm_2_last_event_value) =
             now.is_valid() ? now.strftime("%d/%m/%Y %H:%M:%S") : "Ora non disponibile";
       - component.update: alarm_2_count
+      - lambda: id(event_log).log_event("ALLARME", "${central_2_name} attivata");
       - script.execute: update_status_led
       - if:
           condition:
@@ -736,6 +808,7 @@ script:
             id(alarm_1_last_duration) = now.timestamp - id(alarm_1_started);
           }
           id(alarm_1_started) = 0;
+      - lambda: id(event_log).log_event("RIPRISTINO", "${central_1_name} ripristinata");
       - script.execute: update_status_led
       - if:
           condition:
@@ -763,6 +836,7 @@ script:
             id(alarm_2_last_duration) = now.timestamp - id(alarm_2_started);
           }
           id(alarm_2_started) = 0;
+      - lambda: id(event_log).log_event("RIPRISTINO", "${central_2_name} ripristinata");
       - script.execute: update_status_led
       - if:
           condition:
@@ -872,11 +946,13 @@ script:
                            event_name.c_str(), response->status_code, detail.c_str());
                   id(telegram_status).publish_state(status);
                   ESP_LOGI("telegram", "%s", status);
+                  id(event_log).log_event("TELEGRAM", status);
           on_error:
             then:
               - lambda: |-
-                  id(telegram_status).publish_state(
-                    std::string("Errore connessione - ") + event_name);
+                  std::string status = std::string("Errore connessione - ") + event_name;
+                  id(telegram_status).publish_state(status);
+                  id(event_log).log_event("TELEGRAM", status);
   - id: telegram_test
     mode: restart
     then:
@@ -913,8 +989,10 @@ script:
                   snprintf(result, sizeof(result), "%s: HTTP %d",
                            event_name.c_str(), response->status_code);
                   id(brevo_status).publish_state(result);
+                  id(event_log).log_event("EMAIL", result);
           on_error:
             then:
               - lambda: |-
-                  id(brevo_status).publish_state(
-                    std::string("Errore invio - ") + event_name);
+                  std::string result = std::string("Errore invio - ") + event_name;
+                  id(brevo_status).publish_state(result);
+                  id(event_log).log_event("EMAIL", result);
