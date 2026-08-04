@@ -10,6 +10,8 @@ compilazione e test reali sulla Waveshare ESP32-S3-POE-ETH-8DI-8RO.
 - IP locale e pubblico nel report di rete;
 - durata offline esatta durante il funzionamento e stimata entro circa 5 minuti
   dopo un'interruzione improvvisa dell'alimentazione;
+- sincronizzazione autonoma SNTP ogni 6 ore con aggiornamento del RTC hardware,
+  senza dipendere dall'orario fornito da Home Assistant;
 - comunicazione autonoma verso più istanze Home Assistant;
 - gestione di endpoint, autenticazione, ritentativi e coda offline;
 - comandi Telegram con elenco mittenti autorizzati;
