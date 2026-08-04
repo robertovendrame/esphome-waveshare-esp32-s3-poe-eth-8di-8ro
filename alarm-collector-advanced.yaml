@@ -7,6 +7,8 @@ substitutions:
   brevo_sender_name: !secret brevo_sender_name
   brevo_recipient_email: !secret brevo_recipient_email
   brevo_recipient_name: !secret brevo_recipient_name
+  telegram_updates_url: !secret telegram_updates_url
+  telegram_authorized_chat_id: !secret telegram_chat_id
 
 esphome:
   name: ${device_name}
@@ -15,7 +17,7 @@ esphome:
   compile_process_limit: 1
   project:
     name: "roberto.alarm-contact-collector"
-    version: "0.6.1"
+    version: "0.7.0"
   on_boot:
     priority: -100
     then:
@@ -181,6 +183,8 @@ http_request:
   verify_ssl: true
   follow_redirects: true
 
+json:
+
 i2c:
   id: main_i2c
   sda: GPIO42
@@ -263,6 +267,26 @@ globals:
     restore_value: false
     initial_value: '""'
   - id: last_ntp_sync_value
+    type: std::string
+    restore_value: false
+    initial_value: '"In attesa"'
+  - id: telegram_update_offset
+    type: int64_t
+    restore_value: true
+    initial_value: "0"
+  - id: telegram_command_reply_pending
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: telegram_command_name
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: telegram_command_reply
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: telegram_command_status_value
     type: std::string
     restore_value: false
     initial_value: '"In attesa"'
@@ -418,6 +442,12 @@ switch:
     icon: mdi:email-fast-outline
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
+  - platform: template
+    id: telegram_commands_enabled
+    name: "Comandi Telegram abilitati"
+    icon: mdi:message-text-lock-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
 
   # Uscite fisiche mantenute interne e sempre spente in questo firmware.
   - platform: gpio
@@ -738,6 +768,12 @@ text_sensor:
     entity_category: diagnostic
     lambda: return id(last_ntp_sync_value);
     update_interval: 30s
+  - platform: template
+    name: "Ultimo comando Telegram"
+    icon: mdi:message-processing-outline
+    entity_category: diagnostic
+    lambda: return id(telegram_command_status_value);
+    update_interval: 10s
   - platform: ethernet_info
     ip_address:
       id: ethernet_ip
@@ -810,8 +846,131 @@ interval:
             - lambda: |-
                 auto now = id(board_rtc).now();
                 if (now.is_valid()) id(last_online_checkpoint) = now.timestamp;
+  - interval: 10s
+    then:
+      - if:
+          condition:
+            and:
+              - switch.is_on: telegram_commands_enabled
+              - lambda: return id(ethernet_ever_connected) && !id(ethernet_lost);
+          then:
+            - script.execute: telegram_poll
 
 script:
+  - id: telegram_poll
+    mode: single
+    then:
+      - lambda: id(telegram_command_reply_pending) = false;
+      - http_request.get:
+          url: !lambda |-
+            return std::string("${telegram_updates_url}?offset=") +
+                   std::to_string(id(telegram_update_offset)) + "&limit=1&timeout=0";
+          capture_response: true
+          max_response_buffer_size: 2048
+          request_headers:
+            accept: "application/json"
+          on_response:
+            then:
+              - if:
+                  condition:
+                    lambda: return response->status_code == 200;
+                  then:
+                    - lambda: |-
+                        json::parse_json(body, [](JsonObject root) -> bool {
+                          JsonArray results = root["result"].as<JsonArray>();
+                          if (results.isNull() || results.size() == 0) return true;
+
+                          JsonObject update = results[0].as<JsonObject>();
+                          int64_t update_id = update["update_id"].as<int64_t>();
+                          if (update_id >= id(telegram_update_offset)) {
+                            id(telegram_update_offset) = update_id + 1;
+                          }
+
+                          JsonObject message = update["message"].as<JsonObject>();
+                          if (message.isNull() || !message["text"].is<const char *>()) return true;
+
+                          int64_t numeric_chat_id = message["chat"]["id"].as<int64_t>();
+                          std::string chat_id = std::to_string(numeric_chat_id);
+                          std::string text = message["text"].as<std::string>();
+                          if (chat_id != "${telegram_authorized_chat_id}") {
+                            id(telegram_command_status_value) = "Rifiutato da chat " + chat_id;
+                            id(event_log).log_event("TELEGRAM CMD", "Comando rifiutato da chat " + chat_id);
+                            return true;
+                          }
+
+                          size_t space = text.find(' ');
+                          std::string command = text.substr(0, space);
+                          size_t at = command.find('@');
+                          if (at != std::string::npos) command.resize(at);
+                          for (auto &character : command) {
+                            if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
+                          }
+
+                          std::string reply;
+                          if (command == "/stato") {
+                            uint32_t uptime = millis() / 1000;
+                            char value[320];
+                            snprintf(value, sizeof(value),
+                                     "📟 STATO CONCENTRATORE\nCentrale 1: %s\nCentrale 2: %s\nMemoria 1: %s\nMemoria 2: %s\nHome Assistant: %s\nUptime: %lu s",
+                                     id(alarm_1).state ? "ALLARME" : "normale",
+                                     id(alarm_2).state ? "ALLARME" : "normale",
+                                     id(alarm_1_memory_value) ? "presente" : "vuota",
+                                     id(alarm_2_memory_value) ? "presente" : "vuota",
+                                     id(native_api).is_connected() ? "collegato" : "scollegato",
+                                     static_cast<unsigned long>(uptime));
+                            reply = value;
+                          } else if (command == "/allarmi") {
+                            char value[320];
+                            snprintf(value, sizeof(value),
+                                     "🚨 ALLARMI\nCentrale 1: %s - conteggio %d\nUltimo evento 1: %s\nCentrale 2: %s - conteggio %d\nUltimo evento 2: %s",
+                                     id(alarm_1).state ? "ATTIVO" : "normale",
+                                     id(alarm_1_count_value), id(alarm_1_last_event_value).c_str(),
+                                     id(alarm_2).state ? "ATTIVO" : "normale",
+                                     id(alarm_2_count_value), id(alarm_2_last_event_value).c_str());
+                            reply = value;
+                          } else if (command == "/rete") {
+                            std::string local_ip = id(ethernet_ip).state;
+                            if (local_ip.empty()) local_ip = "non disponibile";
+                            reply = "🌐 RETE\nIP locale: " + local_ip +
+                                    "\nIP pubblico: " + id(public_ip_value) +
+                                    "\nHome Assistant: " +
+                                    (id(native_api).is_connected() ? "collegato" : "scollegato") +
+                                    "\nUltimo NTP: " + id(last_ntp_sync_value);
+                          } else if (command == "/storico") {
+                            std::string local_ip = id(ethernet_ip).state;
+                            reply = "📚 STORICO EVENTI\nPagina: http://" + local_ip +
+                                    "/events\nCSV: http://" + local_ip + "/events.csv";
+                          } else if (command == "/help" || command == "/start") {
+                            reply = "🤖 COMANDI DISPONIBILI\n/stato - riepilogo generale\n/allarmi - ingressi e memorie\n/rete - IP e collegamenti\n/storico - collegamenti al registro\n/help - questo elenco";
+                          } else if (!command.empty() && command[0] == '/') {
+                            reply = "Comando non riconosciuto. Usa /help.";
+                          } else {
+                            return true;
+                          }
+
+                          id(telegram_command_name) = command;
+                          id(telegram_command_reply) = reply;
+                          id(telegram_command_reply_pending) = true;
+                          id(telegram_command_status_value) = "Eseguito " + command;
+                          id(event_log).log_event("TELEGRAM CMD", "Eseguito " + command);
+                          return true;
+                        });
+                    - if:
+                        condition:
+                          lambda: return id(telegram_command_reply_pending);
+                        then:
+                          - script.execute:
+                              id: telegram_send
+                              event_name: !lambda return std::string("Comando ") + id(telegram_command_name);
+                              telegram_text: !lambda return id(telegram_command_reply);
+                  else:
+                    - lambda: |-
+                        id(telegram_command_status_value) =
+                            "Polling HTTP " + std::to_string(response->status_code);
+          on_error:
+            then:
+              - lambda: id(telegram_command_status_value) = "Errore polling Telegram";
+
   - id: network_report
     mode: restart
     parameters:
