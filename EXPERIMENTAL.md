@@ -14,6 +14,8 @@ compilazione e test reali sulla Waveshare ESP32-S3-POE-ETH-8DI-8RO.
   senza dipendere dall'orario fornito da Home Assistant;
 - comandi Telegram in sola lettura (`/stato`, `/allarmi`, `/rete`, `/storico`,
   `/help`) con `chat_id` autorizzato, offset anti-duplicazione e audit persistente;
+- invio autonomo degli eventi a due istanze Home Assistant tramite webhook HTTPS,
+  con destinazioni disabilitate di default e diagnostica separata;
 - comunicazione autonoma verso più istanze Home Assistant;
 - gestione di endpoint, autenticazione, ritentativi e coda offline;
 - comandi Telegram con elenco mittenti autorizzati;

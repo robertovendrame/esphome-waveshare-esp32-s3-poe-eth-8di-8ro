@@ -17,7 +17,7 @@ esphome:
   compile_process_limit: 1
   project:
     name: "roberto.alarm-contact-collector"
-    version: "0.7.0"
+    version: "0.8.0"
   on_boot:
     priority: -100
     then:
@@ -290,6 +290,22 @@ globals:
     type: std::string
     restore_value: false
     initial_value: '"In attesa"'
+  - id: remote_ha_event
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: remote_ha_message
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: remote_ha_1_status_value
+    type: std::string
+    restore_value: false
+    initial_value: '"Disabilitato"'
+  - id: remote_ha_2_status_value
+    type: std::string
+    restore_value: false
+    initial_value: '"Disabilitato"'
   - id: startup_complete
     type: bool
     restore_value: false
@@ -446,6 +462,18 @@ switch:
     id: telegram_commands_enabled
     name: "Comandi Telegram abilitati"
     icon: mdi:message-text-lock-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: template
+    id: remote_ha_1_enabled
+    name: "Invio Home Assistant remoto 1"
+    icon: mdi:home-export-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: template
+    id: remote_ha_2_enabled
+    name: "Invio Home Assistant remoto 2"
+    icon: mdi:home-export-outline
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
 
@@ -774,6 +802,18 @@ text_sensor:
     entity_category: diagnostic
     lambda: return id(telegram_command_status_value);
     update_interval: 10s
+  - platform: template
+    name: "Ultimo invio Home Assistant remoto 1"
+    icon: mdi:cloud-check-outline
+    entity_category: diagnostic
+    lambda: return id(remote_ha_1_status_value);
+    update_interval: 10s
+  - platform: template
+    name: "Ultimo invio Home Assistant remoto 2"
+    icon: mdi:cloud-check-outline
+    entity_category: diagnostic
+    lambda: return id(remote_ha_2_status_value);
+    update_interval: 10s
   - platform: ethernet_info
     ip_address:
       id: ethernet_ip
@@ -857,6 +897,72 @@ interval:
             - script.execute: telegram_poll
 
 script:
+  - id: remote_ha_send
+    mode: queued
+    max_runs: 8
+    parameters:
+      event_name: string
+      event_message: string
+    then:
+      - lambda: |-
+          id(remote_ha_event) = event_name;
+          id(remote_ha_message) = event_message;
+      - if:
+          condition:
+            switch.is_on: remote_ha_1_enabled
+          then:
+            - http_request.post:
+                url: !secret ha_remote_1_webhook_url
+                capture_response: true
+                max_response_buffer_size: 256
+                request_headers:
+                  Content-Type: "application/json"
+                json: &remote_ha_payload |-
+                  auto now = id(board_rtc).now();
+                  root["device"] = "${device_name}";
+                  root["event"] = id(remote_ha_event);
+                  root["message"] = id(remote_ha_message);
+                  root["timestamp"] = now.is_valid() ? now.strftime("%Y-%m-%dT%H:%M:%S%z") : "";
+                  root["alarm_1"] = id(alarm_1).state;
+                  root["alarm_2"] = id(alarm_2).state;
+                  root["memory_1"] = id(alarm_1_memory_value);
+                  root["memory_2"] = id(alarm_2_memory_value);
+                  root["local_ip"] = id(ethernet_ip).state;
+                  root["public_ip"] = id(public_ip_value);
+                on_response:
+                  then:
+                    - lambda: |-
+                        id(remote_ha_1_status_value) =
+                            id(remote_ha_event) + ": HTTP " + std::to_string(response->status_code);
+                        id(event_log).log_event("HA REMOTO 1", id(remote_ha_1_status_value));
+                on_error:
+                  then:
+                    - lambda: |-
+                        id(remote_ha_1_status_value) = "Errore invio - " + id(remote_ha_event);
+                        id(event_log).log_event("HA REMOTO 1", id(remote_ha_1_status_value));
+      - if:
+          condition:
+            switch.is_on: remote_ha_2_enabled
+          then:
+            - http_request.post:
+                url: !secret ha_remote_2_webhook_url
+                capture_response: true
+                max_response_buffer_size: 256
+                request_headers:
+                  Content-Type: "application/json"
+                json: *remote_ha_payload
+                on_response:
+                  then:
+                    - lambda: |-
+                        id(remote_ha_2_status_value) =
+                            id(remote_ha_event) + ": HTTP " + std::to_string(response->status_code);
+                        id(event_log).log_event("HA REMOTO 2", id(remote_ha_2_status_value));
+                on_error:
+                  then:
+                    - lambda: |-
+                        id(remote_ha_2_status_value) = "Errore invio - " + id(remote_ha_event);
+                        id(event_log).log_event("HA REMOTO 2", id(remote_ha_2_status_value));
+
   - id: telegram_poll
     mode: single
     then:
@@ -1045,6 +1151,10 @@ script:
               id(network_report_event) + " - IP locale " + local_ip +
               ", IP pubblico " + id(public_ip_value) +
               ", offline " + offline);
+      - script.execute:
+          id: remote_ha_send
+          event_name: !lambda return id(network_report_event);
+          event_message: !lambda return id(network_report_message);
       - if:
           condition:
             switch.is_on: telegram_enabled
@@ -1075,6 +1185,10 @@ script:
             now.is_valid() ? now.strftime("%d/%m/%Y %H:%M:%S") : "Ora non disponibile";
       - component.update: alarm_1_count
       - lambda: id(event_log).log_event("ALLARME", "${central_1_name} attivata");
+      - script.execute:
+          id: remote_ha_send
+          event_name: "alarm_1_activated"
+          event_message: "Allarme attivo su ${central_1_name}"
       - script.execute: update_status_led
       - if:
           condition:
@@ -1110,6 +1224,10 @@ script:
             now.is_valid() ? now.strftime("%d/%m/%Y %H:%M:%S") : "Ora non disponibile";
       - component.update: alarm_2_count
       - lambda: id(event_log).log_event("ALLARME", "${central_2_name} attivata");
+      - script.execute:
+          id: remote_ha_send
+          event_name: "alarm_2_activated"
+          event_message: "Allarme attivo su ${central_2_name}"
       - script.execute: update_status_led
       - if:
           condition:
@@ -1143,6 +1261,10 @@ script:
           }
           id(alarm_1_started) = 0;
       - lambda: id(event_log).log_event("RIPRISTINO", "${central_1_name} ripristinata");
+      - script.execute:
+          id: remote_ha_send
+          event_name: "alarm_1_restored"
+          event_message: "Allarme ripristinato su ${central_1_name}"
       - script.execute: update_status_led
       - if:
           condition:
@@ -1171,6 +1293,10 @@ script:
           }
           id(alarm_2_started) = 0;
       - lambda: id(event_log).log_event("RIPRISTINO", "${central_2_name} ripristinata");
+      - script.execute:
+          id: remote_ha_send
+          event_name: "alarm_2_restored"
+          event_message: "Allarme ripristinato su ${central_2_name}"
       - script.execute: update_status_led
       - if:
           condition:
