@@ -15,7 +15,7 @@ esphome:
   compile_process_limit: 1
   project:
     name: "roberto.alarm-contact-collector"
-    version: "0.6.0"
+    version: "0.6.1"
   on_boot:
     priority: -100
     then:
@@ -199,13 +199,23 @@ time:
     i2c_id: main_i2c
     address: 0x51
     update_interval: never
-  - platform: homeassistant
-    id: ha_time
+  - platform: sntp
+    id: network_time
     timezone: Europe/Rome
+    servers:
+      - 0.it.pool.ntp.org
+      - 1.it.pool.ntp.org
+      - time.cloudflare.com
+    update_interval: 6h
     on_time_sync:
       then:
         - pcf85063.write_time:
             id: board_rtc
+        - lambda: |-
+            auto now = id(network_time).now();
+            id(last_ntp_sync_value) =
+                now.is_valid() ? now.strftime("%d/%m/%Y %H:%M:%S") : "Ora non valida";
+            id(event_log).log_event("OROLOGIO", "Ora sincronizzata tramite NTP e salvata nel RTC");
 
 globals:
   - id: boot_count
@@ -252,6 +262,10 @@ globals:
     type: std::string
     restore_value: false
     initial_value: '""'
+  - id: last_ntp_sync_value
+    type: std::string
+    restore_value: false
+    initial_value: '"In attesa"'
   - id: startup_complete
     type: bool
     restore_value: false
@@ -718,6 +732,12 @@ text_sensor:
     entity_category: diagnostic
     lambda: return {"Nessun invio"};
     update_interval: never
+  - platform: template
+    name: "Ultima sincronizzazione NTP"
+    icon: mdi:clock-check-outline
+    entity_category: diagnostic
+    lambda: return id(last_ntp_sync_value);
+    update_interval: 30s
   - platform: ethernet_info
     ip_address:
       id: ethernet_ip
