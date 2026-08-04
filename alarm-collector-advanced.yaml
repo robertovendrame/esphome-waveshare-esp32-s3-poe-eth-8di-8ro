@@ -15,7 +15,7 @@ esphome:
   compile_process_limit: 1
   project:
     name: "roberto.alarm-contact-collector"
-    version: "0.5.0"
+    version: "0.6.0"
   on_boot:
     priority: -100
     then:
@@ -28,6 +28,16 @@ esphome:
       - switch.turn_off: relay_7_internal
       - switch.turn_off: relay_8_internal
       - pcf85063.read_time:
+      - lambda: |-
+          auto now = id(board_rtc).now();
+          id(boot_count) += 1;
+          id(boot_event_name) = id(boot_count) == 1 ? "Primo avvio" : "Riavvio";
+          if (now.is_valid() && id(last_online_checkpoint) > 0 &&
+              now.timestamp >= id(last_online_checkpoint)) {
+            id(boot_offline_seconds) = now.timestamp - id(last_online_checkpoint);
+          } else {
+            id(boot_offline_seconds) = -1;
+          }
       - lambda: id(event_log).log_boot();
       - text_sensor.template.publish:
           id: telegram_status
@@ -38,9 +48,14 @@ esphome:
       - script.execute: update_status_led
       - delay: 5s
       - lambda: id(startup_complete) = true;
+  on_shutdown:
+    then:
+      - lambda: |-
+          auto now = id(board_rtc).now();
+          if (now.is_valid()) id(last_online_checkpoint) = now.timestamp;
 
 external_components:
-  - source: github://robertovendrame/esphome-waveshare-esp32-s3-poe-eth-8di-8ro@main
+  - source: github://robertovendrame/esphome-waveshare-esp32-s3-poe-eth-8di-8ro@experimental
     components: [event_history]
     refresh: 0s
 
@@ -109,54 +124,49 @@ ethernet:
             - lambda: id(ethernet_ever_connected) = true;
             - lambda: id(event_log).log_event("RETE", "Ethernet collegata");
             - delay: 2s
-            - if:
-                condition:
-                  switch.is_on: telegram_enabled
-                then:
-                  - script.execute:
-                      id: telegram_send
-                      event_name: "Avvio"
-                      telegram_text: "🟢 Alarm Contact Collector avviato e collegato alla rete."
-            - if:
-                condition:
-                  switch.is_on: brevo_enabled
-                then:
-                  - script.execute:
-                      id: brevo_send
-                      subject: "Alarm Contact Collector avviato"
-                      message: "Il concentratore allarmi è avviato e collegato alla rete."
-                      event_name: "Avvio"
+            - script.execute:
+                id: network_report
+                event_name: !lambda return id(boot_event_name);
+                intro: !lambda |-
+                  return id(boot_event_name) + std::string(" - causa: ") +
+                         id(event_log).reset_reason_text();
+                offline_seconds: !lambda return static_cast<int>(id(boot_offline_seconds));
+            - lambda: |-
+                auto now = id(board_rtc).now();
+                if (now.is_valid()) id(last_online_checkpoint) = now.timestamp;
           else:
             - if:
                 condition:
                   lambda: return id(ethernet_lost);
                 then:
-                  - lambda: id(ethernet_lost) = false;
+                  - lambda: |-
+                      auto now = id(board_rtc).now();
+                      if (now.is_valid() && id(ethernet_outage_started) > 0 &&
+                          now.timestamp >= id(ethernet_outage_started)) {
+                        id(last_outage_seconds) = now.timestamp - id(ethernet_outage_started);
+                      } else {
+                        id(last_outage_seconds) = -1;
+                      }
+                      id(ethernet_lost) = false;
                   - lambda: id(event_log).log_event("RETE", "Connessione Ethernet ripristinata");
-                  - if:
-                      condition:
-                        switch.is_on: telegram_enabled
-                      then:
-                        - script.execute:
-                            id: telegram_send
-                            event_name: "Ethernet ripristinata"
-                            telegram_text: "🟢 Connessione Ethernet ripristinata."
-                  - if:
-                      condition:
-                        switch.is_on: brevo_enabled
-                      then:
-                        - script.execute:
-                            id: brevo_send
-                            subject: "Ethernet ripristinata"
-                            message: "La connessione Ethernet del concentratore è stata ripristinata."
-                            event_name: "Ethernet ripristinata"
+                  - script.execute:
+                      id: network_report
+                      event_name: "Ethernet ripristinata"
+                      intro: "Connessione Ethernet ripristinata"
+                      offline_seconds: !lambda return static_cast<int>(id(last_outage_seconds));
+                  - lambda: |-
+                      auto now = id(board_rtc).now();
+                      if (now.is_valid()) id(last_online_checkpoint) = now.timestamp;
   on_disconnect:
     then:
       - if:
           condition:
             lambda: return id(ethernet_ever_connected);
           then:
-            - lambda: id(ethernet_lost) = true;
+            - lambda: |-
+                id(ethernet_lost) = true;
+                auto now = id(board_rtc).now();
+                id(ethernet_outage_started) = now.is_valid() ? now.timestamp : 0;
       - script.execute: update_status_led
       - delay: 10s
       - if:
@@ -198,6 +208,50 @@ time:
             id: board_rtc
 
 globals:
+  - id: boot_count
+    type: uint32_t
+    restore_value: true
+    initial_value: "0"
+  - id: boot_event_name
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: last_online_checkpoint
+    type: int64_t
+    restore_value: true
+    initial_value: "0"
+  - id: boot_offline_seconds
+    type: int64_t
+    restore_value: false
+    initial_value: "-1"
+  - id: ethernet_outage_started
+    type: int64_t
+    restore_value: false
+    initial_value: "0"
+  - id: last_outage_seconds
+    type: int64_t
+    restore_value: false
+    initial_value: "-1"
+  - id: public_ip_value
+    type: std::string
+    restore_value: false
+    initial_value: '"non disponibile"'
+  - id: network_report_event
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: network_report_intro
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: network_report_offline_seconds
+    type: int
+    restore_value: false
+    initial_value: "-1"
+  - id: network_report_message
+    type: std::string
+    restore_value: false
+    initial_value: '""'
   - id: startup_complete
     type: bool
     restore_value: false
@@ -666,6 +720,7 @@ text_sensor:
     update_interval: never
   - platform: ethernet_info
     ip_address:
+      id: ethernet_ip
       name: "Indirizzo IP Ethernet"
       entity_category: diagnostic
     mac_address:
@@ -726,8 +781,109 @@ interval:
   - interval: 5s
     then:
       - script.execute: update_status_led
+  - interval: 5min
+    then:
+      - if:
+          condition:
+            lambda: return id(ethernet_ever_connected) && !id(ethernet_lost);
+          then:
+            - lambda: |-
+                auto now = id(board_rtc).now();
+                if (now.is_valid()) id(last_online_checkpoint) = now.timestamp;
 
 script:
+  - id: network_report
+    mode: restart
+    parameters:
+      event_name: string
+      intro: string
+      offline_seconds: int
+    then:
+      - lambda: |-
+          id(network_report_event) = event_name;
+          id(network_report_intro) = intro;
+          id(network_report_offline_seconds) = offline_seconds;
+          id(public_ip_value) = "non disponibile";
+      - http_request.get:
+          url: "https://api.ipify.org"
+          capture_response: true
+          max_response_buffer_size: 64
+          on_response:
+            then:
+              - lambda: |-
+                  std::string value = body;
+                  while (!value.empty() &&
+                         (value.back() == ' ' || value.back() == '\n' ||
+                          value.back() == '\r' || value.back() == '\t')) {
+                    value.pop_back();
+                  }
+                  size_t first = 0;
+                  while (first < value.size() &&
+                         (value[first] == ' ' || value[first] == '\n' ||
+                          value[first] == '\r' || value[first] == '\t')) {
+                    first++;
+                  }
+                  if (first > 0) value.erase(0, first);
+                  if (response->status_code == 200 && !value.empty() && value.size() < 64) {
+                    id(public_ip_value) = value;
+                  }
+              - script.execute: network_report_send
+          on_error:
+            then:
+              - script.execute: network_report_send
+
+  - id: network_report_send
+    mode: restart
+    then:
+      - lambda: |-
+          auto format_duration = [](int seconds) -> std::string {
+            if (seconds < 0) return "non disponibile";
+            if (seconds < 60) return "meno di 1 minuto";
+            int days = seconds / 86400;
+            int hours = (seconds % 86400) / 3600;
+            int minutes = (seconds % 3600) / 60;
+            int secs = seconds % 60;
+            char value[96];
+            if (days > 0) {
+              snprintf(value, sizeof(value), "%d g %d h %d min %d s", days, hours, minutes, secs);
+            } else if (hours > 0) {
+              snprintf(value, sizeof(value), "%d h %d min %d s", hours, minutes, secs);
+            } else {
+              snprintf(value, sizeof(value), "%d min %d s", minutes, secs);
+            }
+            return value;
+          };
+          std::string local_ip = id(ethernet_ip).state;
+          if (local_ip.empty()) local_ip = "non disponibile";
+          std::string offline = format_duration(id(network_report_offline_seconds));
+          id(network_report_message) =
+              id(network_report_intro) +
+              "\nIP locale: " + local_ip +
+              "\nIP pubblico: " + id(public_ip_value) +
+              "\nTempo offline: " + offline;
+          id(event_log).log_event(
+              "RETE",
+              id(network_report_event) + " - IP locale " + local_ip +
+              ", IP pubblico " + id(public_ip_value) +
+              ", offline " + offline);
+      - if:
+          condition:
+            switch.is_on: telegram_enabled
+          then:
+            - script.execute:
+                id: telegram_send
+                event_name: !lambda return id(network_report_event);
+                telegram_text: !lambda return id(network_report_message);
+      - if:
+          condition:
+            switch.is_on: brevo_enabled
+          then:
+            - script.execute:
+                id: brevo_send
+                subject: !lambda return std::string("Alarm Contact Collector - ") + id(network_report_event);
+                message: !lambda return id(network_report_message);
+                event_name: !lambda return id(network_report_event);
+
   - id: alarm_1_activated
     mode: restart
     then:
