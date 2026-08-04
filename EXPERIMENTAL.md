@@ -6,6 +6,10 @@ compilazione e test reali sulla Waveshare ESP32-S3-POE-ETH-8DI-8RO.
 
 ## Prima fase
 
+- report Telegram/email al primo avvio, ai riavvii e al ripristino Ethernet;
+- IP locale e pubblico nel report di rete;
+- durata offline esatta durante il funzionamento e stimata entro circa 5 minuti
+  dopo un'interruzione improvvisa dell'alimentazione;
 - comunicazione autonoma verso più istanze Home Assistant;
 - gestione di endpoint, autenticazione, ritentativi e coda offline;
 - comandi Telegram con elenco mittenti autorizzati;
