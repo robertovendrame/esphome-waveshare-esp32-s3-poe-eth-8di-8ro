@@ -23,6 +23,7 @@ class EventHistory : public Component, public AsyncWebHandler {
 
   void log_event(const std::string &category, const std::string &message);
   void log_boot();
+  const char *reset_reason_text() const { return reset_reason_(); }
   void clear();
   uint16_t size() const { return this->meta_.count; }
 
@@ -73,4 +74,3 @@ class EventHistory : public Component, public AsyncWebHandler {
 };
 
 }  // namespace esphome::event_history
-
