@@ -2,7 +2,13 @@ name: Validate ESPHome
 
 on:
   push:
+    branches:
+      - main
+      - experimental
   pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   compile:
