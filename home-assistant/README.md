@@ -28,6 +28,31 @@ trattato come una password.
 
 ## Dashboard Lovelace
 
+### Installazione dalla sola interfaccia grafica
+
+Non è necessario modificare `configuration.yaml` o riavviare Home Assistant:
+
+1. aprire **Impostazioni → Dashboard**;
+2. scegliere **Aggiungi dashboard → Nuova dashboard da zero**;
+3. impostare titolo `Alarm Collector` e icona `mdi:shield-home-outline`;
+4. aprire la nuova dashboard;
+5. menu con i tre puntini → **Modifica dashboard**;
+6. nuovamente tre puntini → **Editor configurazione raw**;
+7. cancellare il contenuto proposto e incollare tutto il contenuto di
+   `dashboards/alarm-contact-collector.yaml`;
+8. premere **Salva**.
+
+Questo metodo salva la dashboard nella configurazione interna di Home Assistant
+e può essere ripetuto nello stesso modo su CED HA e Ufficio HA.
+
+File pronto da copiare:
+
+```text
+https://raw.githubusercontent.com/robertovendrame/esphome-waveshare-esp32-s3-poe-eth-8di-8ro/experimental/home-assistant/dashboards/alarm-contact-collector.yaml
+```
+
+### Installazione YAML alternativa
+
 Copiare `dashboards/alarm-contact-collector.yaml` in:
 
 ```text
