@@ -77,3 +77,7 @@ lovelace:
 Eseguire nuovamente il controllo configurazione e riavviare Home Assistant.
 La stessa dashboard può essere usata senza modifiche sia su CED HA sia su
 Ufficio HA.
+
+Lo storico persistente della scheda è disponibile agli indirizzi `/history`,
+`/history.csv` e `/history.json`. Il percorso `/events` è riservato allo stream
+live del web server ESPHome e non rappresenta lo storico salvato in memoria.

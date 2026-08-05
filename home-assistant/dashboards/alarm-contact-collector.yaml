@@ -112,8 +112,9 @@ views:
             content: |-
               {% set ip = states('input_text.alarm_collector_ip_locale') %}
               {% if ip not in ['unknown', 'unavailable', '', 'non disponibile'] %}
-              [Apri storico del concentratore](http://{{ ip }}/events) ·
-              [Scarica CSV](http://{{ ip }}/events.csv)
+              [Apri storico del concentratore](http://{{ ip }}/history) ·
+              [Scarica CSV](http://{{ ip }}/history.csv) ·
+              [Apri JSON](http://{{ ip }}/history.json)
               {% else %}
               Indirizzo locale del concentratore non ancora disponibile.
               {% endif %}

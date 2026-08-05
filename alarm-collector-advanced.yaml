@@ -17,7 +17,7 @@ esphome:
   compile_process_limit: 1
   project:
     name: "roberto.alarm-contact-collector"
-    version: "0.8.0"
+    version: "0.8.1"
   on_boot:
     priority: -100
     then:
@@ -1045,7 +1045,8 @@ script:
                           } else if (command == "/storico") {
                             std::string local_ip = id(ethernet_ip).state;
                             reply = "📚 STORICO EVENTI\nPagina: http://" + local_ip +
-                                    "/events\nCSV: http://" + local_ip + "/events.csv";
+                                    "/history\nCSV: http://" + local_ip + "/history.csv" +
+                                    "\nJSON: http://" + local_ip + "/history.json";
                           } else if (command == "/help" || command == "/start") {
                             reply = "🤖 COMANDI DISPONIBILI\n/stato - riepilogo generale\n/allarmi - ingressi e memorie\n/rete - IP e collegamenti\n/storico - collegamenti al registro\n/help - questo elenco";
                           } else if (!command.empty() && command[0] == '/') {
