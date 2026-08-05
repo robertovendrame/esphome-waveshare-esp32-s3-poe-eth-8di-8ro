@@ -17,7 +17,7 @@ esphome:
   compile_process_limit: 1
   project:
     name: "roberto.alarm-contact-collector"
-    version: "0.8.1"
+    version: "0.8.2"
   on_boot:
     priority: -100
     then:
@@ -266,6 +266,22 @@ globals:
     type: std::string
     restore_value: false
     initial_value: '""'
+  - id: internet_available
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: internet_probe_success
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: internet_retry_count
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: internet_status_value
+    type: std::string
+    restore_value: false
+    initial_value: '"In attesa della rete"'
   - id: last_ntp_sync_value
     type: std::string
     restore_value: false
@@ -797,6 +813,12 @@ text_sensor:
     lambda: return id(last_ntp_sync_value);
     update_interval: 30s
   - platform: template
+    name: "Stato connessione Internet"
+    icon: mdi:web-check
+    entity_category: diagnostic
+    lambda: return id(internet_status_value);
+    update_interval: 10s
+  - platform: template
     name: "Ultimo comando Telegram"
     icon: mdi:message-processing-outline
     entity_category: diagnostic
@@ -1090,6 +1112,15 @@ script:
           id(network_report_intro) = intro;
           id(network_report_offline_seconds) = offline_seconds;
           id(public_ip_value) = "non disponibile";
+          id(internet_available) = false;
+          id(internet_retry_count) = 0;
+          id(internet_status_value) = "Verifica connessione Internet";
+      - script.execute: network_report_probe
+
+  - id: network_report_probe
+    mode: restart
+    then:
+      - lambda: id(internet_probe_success) = false;
       - http_request.get:
           url: "https://api.ipify.org"
           capture_response: true
@@ -1112,11 +1143,40 @@ script:
                   if (first > 0) value.erase(0, first);
                   if (response->status_code == 200 && !value.empty() && value.size() < 64) {
                     id(public_ip_value) = value;
+                    id(internet_probe_success) = true;
+                    id(internet_available) = true;
+                    id(internet_retry_count) = 0;
+                    id(internet_status_value) = "Internet disponibile - IP " + value;
                   }
-              - script.execute: network_report_send
+              - if:
+                  condition:
+                    lambda: return id(internet_probe_success);
+                  then:
+                    - lambda: id(event_log).log_event("RETE", "Internet disponibile");
+                    - script.execute: network_report_send
+                  else:
+                    - script.execute: network_report_retry
           on_error:
             then:
-              - script.execute: network_report_send
+              - script.execute: network_report_retry
+
+  - id: network_report_retry
+    mode: restart
+    then:
+      - lambda: |-
+          id(internet_available) = false;
+          id(internet_retry_count) += 1;
+          id(internet_status_value) =
+              "Internet non disponibile - tentativo " +
+              std::to_string(id(internet_retry_count)) + " - nuovo tentativo tra 30 s";
+          if (id(internet_retry_count) == 1 || id(internet_retry_count) % 10 == 0) {
+            id(event_log).log_event(
+                "RETE",
+                "Internet non disponibile, tentativo " +
+                std::to_string(id(internet_retry_count)));
+          }
+      - delay: 30s
+      - script.execute: network_report_probe
 
   - id: network_report_send
     mode: restart

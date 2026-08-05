@@ -16,9 +16,8 @@ compilazione e test reali sulla Waveshare ESP32-S3-POE-ETH-8DI-8RO.
   `/help`) con `chat_id` autorizzato, offset anti-duplicazione e audit persistente;
 - invio autonomo degli eventi a due istanze Home Assistant tramite webhook HTTPS,
   con destinazioni disabilitate di default e diagnostica separata;
-- package Home Assistant riutilizzabile per istanze remote, con entità di stato,
-  contatore eventi, logbook e rilancio su event bus;
-- dashboard Lovelace dedicata, realizzata esclusivamente con card native;
+- attesa della reale disponibilità Internet dopo un blackout, con conservazione
+  del report di riavvio in RAM e ritentativo automatico ogni 30 secondi;
 - comunicazione autonoma verso più istanze Home Assistant;
 - gestione di endpoint, autenticazione, ritentativi e coda offline;
 - comandi Telegram con elenco mittenti autorizzati;
