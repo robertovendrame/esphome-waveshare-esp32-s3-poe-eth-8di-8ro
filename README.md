@@ -1,82 +1,75 @@
-# ESPHome per Waveshare ESP32-S3-POE-ETH-8DI-8RO
+# Alarm Contact Collector per Waveshare ESP32-S3 8DI/8RO
 
-Firmware ESPHome da banco prova per verificare le periferiche della scheda:
+Firmware ESPHome per usare la Waveshare ESP32-S3-POE-ETH-8DI-8RO come
+concentratore autonomo di contatti puliti provenienti da centrali di allarme.
 
-- 8 relè tramite TCA9554 a `0x20`;
-- 8 ingressi digitali optoisolati;
-- Ethernet/PoE tramite W5500;
-- LED RGB WS2812 e buzzer;
-- RTC PCF85063 a `0x51`;
-- RS485 a 9600 baud con log TX/RX;
-- Bluetooth Proxy;
-- pulsante BOOT e diagnostica ESP32.
+La configurazione iniziale gestisce due centrali, ma la scheda dispone di otto
+ingressi digitali. I relè sono mantenuti spenti e non vengono esposti finché non
+saranno progettate funzioni di comando specifiche e sicure.
 
-Il repository contiene anche `alarm-collector-advanced.yaml`, firmware per
-raccogliere allarmi a contatto pulito da due centrali con memoria eventi,
-segnalazioni locali e notifiche indipendenti tramite Telegram ed email Brevo.
-La guida dedicata è in `README-alarm-collector.md`.
+## Funzioni principali
+
+- due ingressi allarme configurabili singolarmente come NO o NC;
+- memoria, durata, contatore e ultimo evento per ciascuna centrale;
+- LED RGB, buzzer ed esclusione temporanea degli ingressi;
+- Ethernet PoE, RTC hardware e sincronizzazione SNTP autonoma;
+- registro circolare persistente degli ultimi 500 eventi;
+- storico locale in pagina web, CSV e JSON;
+- notifiche Telegram ed email Brevo indipendenti da Home Assistant;
+- comandi Telegram da chat privata o gruppo autorizzato;
+- più amministratori, audit del mittente e conferma a due passaggi;
+- invio affidabile a due istanze Home Assistant mediante webhook autenticati;
+- heartbeat, ritentativi e code indipendenti dopo blackout o assenza Internet.
+
+Versione firmware corrente: **1.0.0-rc2**.
+
+## File principali
+
+| Percorso | Contenuto |
+| --- | --- |
+| `alarm-collector-advanced.yaml` | Firmware ESPHome |
+| `secrets.example.yaml` | Modello dei secret richiesti |
+| `components/event_history/` | Registro eventi persistente |
+| `home-assistant/packages/` | Package ricevitore Home Assistant |
+| `home-assistant/dashboards/` | Dashboard Lovelace pronta |
+| `README-alarm-collector.md` | Installazione e configurazione completa |
+
+## Installazione rapida
+
+1. Copiare `secrets.example.yaml` come `secrets.yaml`.
+2. Sostituire tutti i valori dimostrativi con le proprie credenziali.
+3. Usare ESPHome 2026.7.0 o successivo.
+4. Compilare e installare:
+
+   ```bash
+   esphome run alarm-collector-advanced.yaml
+   ```
+
+Il passaggio diretto da una versione precedente, inclusa la `0.8.0`, alla
+`1.0.0-rc2` è supportato. Gli aggiornamenti successivi possono essere eseguiti
+normalmente tramite ESPHome OTA.
+
+## Collegamenti iniziali
+
+| Centrale | Morsetti Waveshare |
+| --- | --- |
+| Centrale 1 | DI1 e DCOM |
+| Centrale 2 | DI2 e DCOM |
+
+Con logica NO la chiusura produce allarme. Con logica NC l'apertura produce
+allarme e consente una protezione elementare contro il taglio del cavo. Non è
+una supervisione con resistenza EOL.
 
 ## Sicurezza
 
-Il firmware forza tutti i relè su OFF ad ogni avvio e gli ingressi non comandano
-automaticamente le uscite. Il test sequenziale aziona realmente tutti i relè.
-Non collegare carichi durante il primo collaudo.
+- non pubblicare mai `secrets.yaml`;
+- usare token webhook lunghi, casuali e differenti per ogni Home Assistant;
+- autorizzare Telegram tramite ID numerici, non username;
+- i comandi operativi richiedono un codice monouso legato a utente e chat;
+- i contatti dei relè possono commutare tensioni pericolose, anche se il
+  firmware attuale li mantiene spenti.
 
-I contatti dei relè possono commutare tensioni pericolose. Togli alimentazione
-prima di intervenire sui morsetti e usa protezioni adeguate al carico.
+Questo progetto non sostituisce una centrale antintrusione certificata e non ne
+replica certificazioni, supervisione o comunicazioni di sicurezza.
 
-## Installazione
-
-1. Copia `secrets.example.yaml` in `secrets.yaml`.
-2. Genera la chiave API con `openssl rand -base64 32`.
-3. Inserisci chiave API e password OTA in `secrets.yaml`.
-4. Collega la USB-C, tieni premuto BOOT se necessario e installa:
-
-   ```bash
-   esphome run waveshare-8di-8ro-test.yaml
-   ```
-
-5. Dopo il primo flash, collega Ethernet/PoE. Gli aggiornamenti successivi
-   possono essere eseguiti OTA.
-
-## Collaudo consigliato
-
-1. Alimentazione USB-C, senza carichi sui relè.
-2. Verifica nel log la scansione I²C:
-   - TCA9554 `0x20`
-   - PCF85063 `0x51`
-3. Premi `Test LED RGB` e `Test buzzer`.
-4. Premi `Test relè sequenziale`: ogni relè deve scattare due volte.
-5. Chiudi uno alla volta gli ingressi verso `DCOM`: le entità devono diventare
-   ON.
-6. Collega Ethernet e verifica IP, MAC, pagina web e API Home Assistant.
-7. Per RS485 collega un dispositivo a 9600 8N1. Il pulsante invia una lettura
-   Modbus RTU standard (slave 1, holding register 0); TX e RX vengono mostrati
-   nel log.
-8. Verifica che l’RTC mantenga l’ora dopo uno spegnimento con batteria collegata.
-
-## Note hardware
-
-| Funzione | Collegamento |
-| --- | --- |
-| DI1–DI8 | GPIO4–GPIO11, attivi bassi |
-| Relè 1–8 | TCA9554 P0–P7, I²C `0x20` |
-| I²C | SCL GPIO41, SDA GPIO42 |
-| W5500 | INT 12, MOSI 13, MISO 14, CLK 15, CS 16 |
-| RS485 | TX GPIO17, RX GPIO18 |
-| RGB | GPIO38 |
-| Buzzer | GPIO46 |
-| BOOT | GPIO0 |
-| RTC | PCF85063, I²C `0x51` |
-
-Lo slot TF non è incluso nel test: la documentazione Waveshare di questa
-revisione riporta il chip-select non collegato.
-
-## Stato del progetto
-
-- firmware di collaudo `0.1.2`;
-- Alarm Contact Collector `0.4.0`;
-- verificati su hardware reale: LED RGB, buzzer, otto relè senza carichi, otto
-  ingressi digitali, Ethernet, RTC, Home Assistant e Telegram;
-- integrazione email Brevo inclusa;
-- prova RS485 in attesa dell'adattatore esterno.
+Licenza MIT.

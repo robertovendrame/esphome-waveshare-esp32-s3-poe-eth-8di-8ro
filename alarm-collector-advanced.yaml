@@ -62,9 +62,10 @@ esphome:
           if (now.is_valid()) id(last_online_checkpoint) = now.timestamp;
 
 external_components:
-  - source: github://robertovendrame/esphome-waveshare-esp32-s3-poe-eth-8di-8ro@experimental
+  - source:
+      type: local
+      path: components
     components: [event_history]
-    refresh: 0s
 
 esp32:
   board: esp32-s3-devkitc-1

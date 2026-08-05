@@ -1,5 +1,6 @@
 # Copiare questo stesso package su ogni istanza Home Assistant remota.
-# Il valore alarm_collector_webhook_id deve essere diverso in ciascun secrets.yaml.
+# I valori alarm_collector_webhook_id e alarm_collector_payload_token devono
+# essere diversi in ciascun secrets.yaml.
 
 input_text:
   alarm_collector_ultimo_evento:
@@ -77,6 +78,8 @@ automation:
   - id: alarm_collector_ricezione_webhook
     alias: Alarm Collector - Ricezione webhook
     description: Aggiorna le entità locali con gli eventi ricevuti dal concentratore
+    variables:
+      expected_payload_token: !secret alarm_collector_payload_token
     triggers:
       - trigger: webhook
         webhook_id: !secret alarm_collector_webhook_id
@@ -87,7 +90,9 @@ automation:
       - condition: template
         value_template: >-
           {{ trigger.json is defined and
-             trigger.json.device | default('') == 'alarm-contact-collector' }}
+             trigger.json.device | default('') == 'alarm-contact-collector' and
+             trigger.json.auth_token | default('') ==
+               expected_payload_token }}
     actions:
       - action: input_text.set_value
         target:

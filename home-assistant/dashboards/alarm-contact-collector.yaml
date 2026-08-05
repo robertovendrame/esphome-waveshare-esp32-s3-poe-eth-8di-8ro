@@ -15,7 +15,6 @@ views:
       - type: entity
         entity: counter.alarm_collector_eventi_ricevuti
         name: Eventi
-
     sections:
       - type: grid
         cards:
@@ -34,13 +33,18 @@ views:
             entity: input_text.alarm_collector_ultimo_evento
             name: Ultimo evento
             vertical: false
+            tap_action:
+              action: none
+            hold_action:
+              action: more-info
           - type: tile
             entity: input_text.alarm_collector_ultimo_aggiornamento
             name: Ultimo aggiornamento
             vertical: false
-
-      - type: grid
-        cards:
+            tap_action:
+              action: none
+            hold_action:
+              action: more-info
           - type: heading
             heading: Centrali
             icon: mdi:alarm-light-outline
@@ -94,9 +98,6 @@ views:
             entity: counter.alarm_collector_eventi_ricevuti
             name: Eventi ricevuti
             vertical: false
-
-      - type: grid
-        cards:
           - type: heading
             heading: Rete concentratore
             icon: mdi:lan
@@ -104,37 +105,28 @@ views:
             entity: input_text.alarm_collector_ip_locale
             name: IP locale
             vertical: false
+            tap_action:
+              action: none
+            hold_action:
+              action: more-info
           - type: tile
             entity: input_text.alarm_collector_ip_pubblico
             name: IP pubblico
             vertical: false
+            tap_action:
+              action: none
+            hold_action:
+              action: more-info
           - type: markdown
             content: |-
               {% set ip = states('input_text.alarm_collector_ip_locale') %}
               {% if ip not in ['unknown', 'unavailable', '', 'non disponibile'] %}
-              [Apri storico del concentratore](http://{{ ip }}/history) ·
+              [Apri storico](http://{{ ip }}/history) ·
               [Scarica CSV](http://{{ ip }}/history.csv) ·
               [Apri JSON](http://{{ ip }}/history.json)
               {% else %}
               Indirizzo locale del concentratore non ancora disponibile.
               {% endif %}
-
-      - type: grid
-        column_span: 2
-        cards:
-          - type: heading
-            heading: Cronologia Home Assistant
-            icon: mdi:timeline-clock-outline
-          - type: logbook
-            hours_to_show: 24
-            entities:
-              - sensor.alarm_collector_stato_generale
-              - binary_sensor.alarm_collector_collegamento_recente
-              - input_boolean.alarm_collector_allarme_1
-              - input_boolean.alarm_collector_allarme_2
-              - input_boolean.alarm_collector_memoria_1
-              - input_boolean.alarm_collector_memoria_2
-              - input_text.alarm_collector_ultimo_evento
 
       - type: grid
         cards:
@@ -152,3 +144,22 @@ views:
                 name: Totale eventi ricevuti
               - entity: binary_sensor.alarm_collector_collegamento_recente
                 name: Evento ricevuto negli ultimi 15 minuti
+
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: Cronologia Home Assistant
+            icon: mdi:timeline-clock-outline
+          - type: logbook
+            hours_to_show: 24
+            entities:
+              - sensor.alarm_collector_stato_generale
+              - binary_sensor.alarm_collector_collegamento_recente
+              - input_boolean.alarm_collector_allarme_1
+              - input_boolean.alarm_collector_allarme_2
+              - input_boolean.alarm_collector_memoria_1
+              - input_boolean.alarm_collector_memoria_2
+              - input_text.alarm_collector_ultimo_evento
+            grid_options:
+              columns: full

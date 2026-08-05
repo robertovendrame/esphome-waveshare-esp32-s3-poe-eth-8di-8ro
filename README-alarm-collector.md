@@ -3,7 +3,7 @@
 Firmware ESPHome per raccogliere allarmi a contatto pulito da due centrali,
 espandibile fino a otto ingressi, sulla Waveshare ESP32-S3-POE-ETH-8DI-8RO.
 
-## Funzioni della versione 0.5.0
+## Funzioni della versione 1.0.0-rc2
 
 - due centrali configurabili NO/NC da Home Assistant;
 - ingresso attivo, memoria allarme, ultimo evento, durata e contatore;
@@ -21,6 +21,13 @@ espandibile fino a otto ingressi, sulla Waveshare ESP32-S3-POE-ETH-8DI-8RO.
   Assistant e disattivabili da un interruttore;
 - sei ingressi di riserva;
 - tutti gli otto relè forzati OFF e non esposti.
+- invio a due istanze Home Assistant mediante webhook HTTPS con token payload
+  separato per ciascuna destinazione;
+- heartbeat ogni cinque minuti e code di ritentativo indipendenti;
+- comandi Telegram dalla chat privata o dal gruppo autorizzato;
+- più amministratori Telegram configurabili tramite ID numerici;
+- conferma a due passaggi per tacitazione e cancellazione memorie;
+- audit persistente di username, ID utente, ID chat, comando e risultato.
 
 ## Collegamenti iniziali
 
@@ -44,7 +51,10 @@ interrotto non sono distinguibili.
 
    ```yaml
    telegram_send_url: "https://api.telegram.org/botTOKEN/sendMessage"
+   telegram_updates_url: "https://api.telegram.org/botTOKEN/getUpdates"
    telegram_chat_id: "CHAT_ID"
+   telegram_authorized_group_id: "-100ID_GRUPPO"
+   telegram_admin_user_ids: "ID_ADMIN_1,ID_ADMIN_2"
    ```
 
 6. Compilare e installare il firmware.
@@ -52,6 +62,11 @@ interrotto non sono distinguibili.
 8. Controllare `Ultimo invio Telegram`: HTTP 200 indica successo; in caso di
    errore viene mostrata anche la descrizione restituita da Telegram.
 9. Verificare che `Notifiche Telegram abilitate` sia acceso.
+
+I comandi di consultazione sono `/stato`, `/allarmi`, `/rete`, `/storico` e
+`/help`. `/tacita` e `/reset_memorie` sono riservati agli amministratori e
+richiedono `/conferma CODICE` entro 60 secondi nella stessa chat e dallo stesso
+utente. `/annulla` elimina la richiesta pendente.
 
 Il token è una credenziale: non va inserito nel file pubblico, nei log o nel
 repository GitHub.
@@ -133,3 +148,17 @@ esphome run alarm-collector-advanced.yaml
 
 Il firmware non è una centrale di sicurezza certificata e non sostituisce le
 funzioni, certificazioni o comunicazioni proprie delle centrali collegate.
+
+## Home Assistant remoti
+
+Per ciascuna istanza copiare il package e la dashboard contenuti nella cartella
+`home-assistant`. Nel `secrets.yaml` dell'istanza definire:
+
+```yaml
+alarm_collector_webhook_id: "ID_WEBHOOK_LUNGO_E_CASUALE"
+alarm_collector_payload_token: "TOKEN_PAYLOAD_LUNGO_E_CASUALE"
+```
+
+Il token deve coincidere con `ha_remote_1_webhook_token` oppure
+`ha_remote_2_webhook_token` del firmware, secondo la destinazione. Il package
+rifiuta i payload con dispositivo o token non validi.

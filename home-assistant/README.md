@@ -10,10 +10,11 @@ homeassistant:
   packages: !include_dir_named packages
 ```
 
-Nel `secrets.yaml` di ogni istanza aggiungere un ID diverso:
+Nel `secrets.yaml` di ogni istanza aggiungere un ID e un token differenti:
 
 ```yaml
 alarm_collector_webhook_id: "GENERA_UN_ID_CASUALE_DI_ALMENO_64_CARATTERI"
+alarm_collector_payload_token: "GENERA_UN_SECONDO_TOKEN_LUNGO_E_CASUALE"
 ```
 
 La URL da configurare nel firmware è:
@@ -23,8 +24,9 @@ https://NOME-ISTANZA/api/webhook/VALORE_DEL_WEBHOOK_ID
 ```
 
 Dopo aver copiato il package, eseguire il controllo configurazione e riavviare
-Home Assistant. Il webhook è accessibile da Internet e il suo ID deve essere
-trattato come una password.
+Home Assistant. Il webhook è accessibile da Internet: ID e token payload devono
+essere trattati come password. Il token deve coincidere con quello configurato
+per la stessa destinazione nel firmware.
 
 ## Dashboard Lovelace
 
@@ -48,7 +50,7 @@ e può essere ripetuto nello stesso modo su CED HA e Ufficio HA.
 File pronto da copiare:
 
 ```text
-https://raw.githubusercontent.com/robertovendrame/esphome-waveshare-esp32-s3-poe-eth-8di-8ro/experimental/home-assistant/dashboards/alarm-contact-collector.yaml
+https://raw.githubusercontent.com/robertovendrame/esphome-waveshare-esp32-s3-poe-eth-8di-8ro/main/home-assistant/dashboards/alarm-contact-collector.yaml
 ```
 
 ### Installazione YAML alternativa
