@@ -1,0 +1,153 @@
+title: Alarm Contact Collector
+views:
+  - title: Concentratore
+    path: alarm-contact-collector
+    icon: mdi:shield-home-outline
+    type: sections
+    max_columns: 3
+    badges:
+      - type: entity
+        entity: sensor.alarm_collector_stato_generale
+        name: Stato
+      - type: entity
+        entity: binary_sensor.alarm_collector_collegamento_recente
+        name: Collegamento
+      - type: entity
+        entity: counter.alarm_collector_eventi_ricevuti
+        name: Eventi
+
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Stato immediato
+            icon: mdi:shield-check-outline
+          - type: tile
+            entity: sensor.alarm_collector_stato_generale
+            name: Stato generale
+            vertical: false
+          - type: tile
+            entity: binary_sensor.alarm_collector_collegamento_recente
+            name: Collegamento recente
+            vertical: false
+          - type: tile
+            entity: input_text.alarm_collector_ultimo_evento
+            name: Ultimo evento
+            vertical: false
+          - type: tile
+            entity: input_text.alarm_collector_ultimo_aggiornamento
+            name: Ultimo aggiornamento
+            vertical: false
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Centrali
+            icon: mdi:alarm-light-outline
+          - type: tile
+            entity: input_boolean.alarm_collector_allarme_1
+            name: Centrale 1
+            color: red
+            tap_action:
+              action: none
+            hold_action:
+              action: more-info
+          - type: tile
+            entity: input_boolean.alarm_collector_allarme_2
+            name: Centrale 2
+            color: red
+            tap_action:
+              action: none
+            hold_action:
+              action: more-info
+          - type: tile
+            entity: input_boolean.alarm_collector_memoria_1
+            name: Memoria centrale 1
+            color: amber
+            tap_action:
+              action: none
+            hold_action:
+              action: more-info
+          - type: tile
+            entity: input_boolean.alarm_collector_memoria_2
+            name: Memoria centrale 2
+            color: amber
+            tap_action:
+              action: none
+            hold_action:
+              action: more-info
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Ultimo evento
+            icon: mdi:message-alert-outline
+          - type: markdown
+            content: |-
+              ## {{ states('input_text.alarm_collector_ultimo_evento') }}
+
+              {{ states('input_text.alarm_collector_ultimo_messaggio') }}
+
+              **Ricevuto:** {{ states('input_text.alarm_collector_ultimo_aggiornamento') }}  
+              **Dispositivo:** {{ states('input_text.alarm_collector_dispositivo') }}
+          - type: tile
+            entity: counter.alarm_collector_eventi_ricevuti
+            name: Eventi ricevuti
+            vertical: false
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Rete concentratore
+            icon: mdi:lan
+          - type: tile
+            entity: input_text.alarm_collector_ip_locale
+            name: IP locale
+            vertical: false
+          - type: tile
+            entity: input_text.alarm_collector_ip_pubblico
+            name: IP pubblico
+            vertical: false
+          - type: markdown
+            content: |-
+              {% set ip = states('input_text.alarm_collector_ip_locale') %}
+              {% if ip not in ['unknown', 'unavailable', '', 'non disponibile'] %}
+              [Apri storico del concentratore](http://{{ ip }}/events) ·
+              [Scarica CSV](http://{{ ip }}/events.csv)
+              {% else %}
+              Indirizzo locale del concentratore non ancora disponibile.
+              {% endif %}
+
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: Cronologia Home Assistant
+            icon: mdi:timeline-clock-outline
+          - type: logbook
+            hours_to_show: 24
+            entities:
+              - sensor.alarm_collector_stato_generale
+              - binary_sensor.alarm_collector_collegamento_recente
+              - input_boolean.alarm_collector_allarme_1
+              - input_boolean.alarm_collector_allarme_2
+              - input_boolean.alarm_collector_memoria_1
+              - input_boolean.alarm_collector_memoria_2
+              - input_text.alarm_collector_ultimo_evento
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Diagnostica
+            icon: mdi:tools
+          - type: entities
+            show_header_toggle: false
+            entities:
+              - entity: input_text.alarm_collector_dispositivo
+                name: Dispositivo
+              - entity: input_text.alarm_collector_ultimo_aggiornamento
+                name: Timestamp dispositivo
+              - entity: counter.alarm_collector_eventi_ricevuti
+                name: Totale eventi ricevuti
+              - entity: binary_sensor.alarm_collector_collegamento_recente
+                name: Evento ricevuto negli ultimi 15 minuti

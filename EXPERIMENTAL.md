@@ -18,6 +18,7 @@ compilazione e test reali sulla Waveshare ESP32-S3-POE-ETH-8DI-8RO.
   con destinazioni disabilitate di default e diagnostica separata;
 - package Home Assistant riutilizzabile per istanze remote, con entità di stato,
   contatore eventi, logbook e rilancio su event bus;
+- dashboard Lovelace dedicata, realizzata esclusivamente con card native;
 - comunicazione autonoma verso più istanze Home Assistant;
 - gestione di endpoint, autenticazione, ritentativi e coda offline;
 - comandi Telegram con elenco mittenti autorizzati;
