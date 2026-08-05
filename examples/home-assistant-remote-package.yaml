@@ -1,6 +1,7 @@
 # Copiare questo file nella cartella packages di Home Assistant e includerlo
 # dalla configurazione principale. Definire alarm_collector_webhook_id nei
-# secrets di questa istanza Home Assistant.
+# secrets di questa istanza Home Assistant. Definire anche
+# alarm_collector_payload_token con lo stesso token configurato nel firmware.
 
 input_datetime:
   alarm_collector_last_seen:
@@ -23,6 +24,11 @@ automation:
           - POST
         local_only: false
     actions:
+      - variables:
+          expected_token: !secret alarm_collector_payload_token
+      - condition: template
+        value_template: >-
+          {{ trigger.json.auth_token | default('') == expected_token }}
       - action: input_datetime.set_datetime
         target:
           entity_id: input_datetime.alarm_collector_last_seen
@@ -45,7 +51,22 @@ automation:
                 {{ trigger.json.event }}: {{ trigger.json.message }}
       - event: alarm_contact_collector_event
         event_data:
-          payload: "{{ trigger.json | to_json }}"
+          device: "{{ trigger.json.device }}"
+          event: "{{ trigger.json.event }}"
+          message: "{{ trigger.json.message }}"
+          timestamp: "{{ trigger.json.timestamp }}"
+          alarm_1: "{{ trigger.json.alarm_1 }}"
+          alarm_2: "{{ trigger.json.alarm_2 }}"
+          memory_1: "{{ trigger.json.memory_1 }}"
+          memory_2: "{{ trigger.json.memory_2 }}"
+          local_ip: "{{ trigger.json.local_ip }}"
+          public_ip: "{{ trigger.json.public_ip }}"
+          internet_available: "{{ trigger.json.internet_available }}"
+          home_assistant_connected: "{{ trigger.json.home_assistant_connected }}"
+          uptime_seconds: "{{ trigger.json.uptime_seconds }}"
+          temperature_c: "{{ trigger.json.temperature_c }}"
+          last_ntp_sync: "{{ trigger.json.last_ntp_sync }}"
+          firmware_version: "{{ trigger.json.firmware_version }}"
     mode: queued
     max: 20
 

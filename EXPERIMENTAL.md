@@ -13,9 +13,12 @@ compilazione e test reali sulla Waveshare ESP32-S3-POE-ETH-8DI-8RO.
 - sincronizzazione autonoma SNTP ogni 6 ore con aggiornamento del RTC hardware,
   senza dipendere dall'orario fornito da Home Assistant;
 - comandi Telegram in sola lettura (`/stato`, `/allarmi`, `/rete`, `/storico`,
-  `/help`) con `chat_id` autorizzato, offset anti-duplicazione e audit persistente;
+  `/help`) da chat privata o gruppo autorizzato, offset anti-duplicazione e audit
+  persistente con ID chat, ID utente e username;
+- comandi amministrativi `/tacita` e `/reset_memorie`, limitati all'utente admin
+  e protetti da codice monouso valido 60 secondi e legato a utente e chat;
 - invio autonomo degli eventi a due istanze Home Assistant tramite webhook HTTPS,
-  con destinazioni disabilitate di default e diagnostica separata;
+  con destinazioni disabilitate di default, token payload separati e diagnostica;
 - attesa della reale disponibilità Internet dopo un blackout, con conservazione
   del report di riavvio in RAM e ritentativo automatico ogni 30 secondi;
 - heartbeat ogni 5 minuti verso i Home Assistant remoti con stato completo,
@@ -34,7 +37,9 @@ compilazione e test reali sulla Waveshare ESP32-S3-POE-ETH-8DI-8RO.
 
 - nessun token, URL privato o chiave nel repository;
 - nessun comando ai relè finché non viene progettata una conferma esplicita;
-- Telegram accetta comandi solo da `chat_id` autorizzati;
+- Telegram accetta comandi solo dalla chat privata o dal gruppo autorizzati e
+  limita i comandi operativi all'ID utente amministratore;
+- tacitazione e cancellazione memorie richiedono un codice monouso di conferma;
 - le comunicazioni verso Home Assistant usano HTTPS e secret separati;
 - ogni funzione sperimentale deve poter essere disabilitata localmente;
 - ogni modifica deve superare GitHub Actions prima del test sulla scheda.
@@ -46,5 +51,5 @@ compilazione e test reali sulla Waveshare ESP32-S3-POE-ETH-8DI-8RO.
 - heartbeat e diagnostica remota;
 - configurazione di più destinazioni senza ricompilare;
 - esportazione e backup automatico dello storico;
-- comandi Telegram amministrativi con conferma a due passaggi;
+- comandi Telegram amministrativi aggiuntivi, sempre con conferma a due passaggi;
 - aggiornamenti firmware controllati e rollback.

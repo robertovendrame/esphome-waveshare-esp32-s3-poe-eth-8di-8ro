@@ -1,7 +1,7 @@
 substitutions:
   device_name: alarm-contact-collector
   friendly_name: "Alarm Contact Collector"
-  firmware_version: "0.9.0"
+  firmware_version: "1.0.0-rc1"
   central_1_name: "Centrale 1"
   central_2_name: "Centrale 2"
   brevo_sender_email: !secret brevo_sender_email
@@ -10,6 +10,10 @@ substitutions:
   brevo_recipient_name: !secret brevo_recipient_name
   telegram_updates_url: !secret telegram_updates_url
   telegram_authorized_chat_id: !secret telegram_chat_id
+  telegram_authorized_group_id: !secret telegram_authorized_group_id
+  telegram_admin_user_id: !secret telegram_admin_user_id
+  ha_remote_1_webhook_token: !secret ha_remote_1_webhook_token
+  ha_remote_2_webhook_token: !secret ha_remote_2_webhook_token
 
 esphome:
   name: ${device_name}
@@ -303,6 +307,38 @@ globals:
     type: std::string
     restore_value: false
     initial_value: '""'
+  - id: telegram_command_reply_chat_id
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: telegram_pending_action
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: telegram_pending_code
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: telegram_pending_user_id
+    type: int64_t
+    restore_value: false
+    initial_value: "0"
+  - id: telegram_pending_chat_id
+    type: int64_t
+    restore_value: false
+    initial_value: "0"
+  - id: telegram_pending_expires_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: telegram_execute_silence
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: telegram_execute_memory_reset
+    type: bool
+    restore_value: false
+    initial_value: "false"
   - id: telegram_command_status_value
     type: std::string
     restore_value: false
@@ -998,6 +1034,7 @@ script:
             root["last_ntp_sync"] = id(last_ntp_sync_value);
             root["firmware_version"] = "${firmware_version}";
             root["delivery_attempt"] = retry_count + 1;
+            root["auth_token"] = "${ha_remote_1_webhook_token}";
           on_response:
             then:
               - if:
@@ -1054,7 +1091,26 @@ script:
           max_response_buffer_size: 256
           request_headers:
             Content-Type: "application/json"
-          json: *remote_ha_payload
+          json: |-
+            auto now = id(board_rtc).now();
+            root["device"] = "${device_name}";
+            root["event"] = event_name;
+            root["message"] = event_message;
+            root["timestamp"] = now.is_valid() ? now.strftime("%Y-%m-%dT%H:%M:%S%z") : "";
+            root["alarm_1"] = id(alarm_1).state;
+            root["alarm_2"] = id(alarm_2).state;
+            root["memory_1"] = id(alarm_1_memory_value);
+            root["memory_2"] = id(alarm_2_memory_value);
+            root["local_ip"] = id(ethernet_ip).state;
+            root["public_ip"] = id(public_ip_value);
+            root["internet_available"] = id(internet_available);
+            root["home_assistant_connected"] = id(native_api).is_connected();
+            root["uptime_seconds"] = millis() / 1000;
+            root["temperature_c"] = id(esp_temperature).state;
+            root["last_ntp_sync"] = id(last_ntp_sync_value);
+            root["firmware_version"] = "${firmware_version}";
+            root["delivery_attempt"] = retry_count + 1;
+            root["auth_token"] = "${ha_remote_2_webhook_token}";
           on_response:
             then:
               - if:
@@ -1167,22 +1223,32 @@ script:
                           if (message.isNull() || !message["text"].is<const char *>()) return true;
 
                           int64_t numeric_chat_id = message["chat"]["id"].as<int64_t>();
+                          int64_t numeric_user_id = message["from"]["id"].as<int64_t>();
                           std::string chat_id = std::to_string(numeric_chat_id);
+                          std::string user_id = std::to_string(numeric_user_id);
+                          std::string username = message["from"]["username"] | "";
+                          std::string first_name = message["from"]["first_name"] | "utente";
+                          std::string actor = username.empty() ? first_name : "@" + username;
                           std::string text = message["text"].as<std::string>();
-                          if (chat_id != "${telegram_authorized_chat_id}") {
-                            id(telegram_command_status_value) = "Rifiutato da chat " + chat_id;
-                            id(event_log).log_event("TELEGRAM CMD", "Comando rifiutato da chat " + chat_id);
+                          bool authorized_chat = chat_id == "${telegram_authorized_chat_id}" ||
+                                                 chat_id == "${telegram_authorized_group_id}";
+                          if (!authorized_chat) {
+                            std::string audit = "RIFIUTATO uid=" + user_id + " chat=" + chat_id;
+                            id(telegram_command_status_value) = audit;
+                            id(event_log).log_event("TELEGRAM CMD", audit);
                             return true;
                           }
 
                           size_t space = text.find(' ');
                           std::string command = text.substr(0, space);
+                          std::string arguments = space == std::string::npos ? "" : text.substr(space + 1);
                           size_t at = command.find('@');
                           if (at != std::string::npos) command.resize(at);
                           for (auto &character : command) {
                             if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
                           }
 
+                          bool is_admin = user_id == "${telegram_admin_user_id}";
                           std::string reply;
                           if (command == "/stato") {
                             uint32_t uptime = millis() / 1000;
@@ -1218,8 +1284,55 @@ script:
                             reply = "📚 STORICO EVENTI\nPagina: http://" + local_ip +
                                     "/history\nCSV: http://" + local_ip + "/history.csv" +
                                     "\nJSON: http://" + local_ip + "/history.json";
+                          } else if (command == "/tacita" || command == "/reset_memorie") {
+                            if (!is_admin) {
+                              reply = "⛔ Operazione riservata all'amministratore.";
+                            } else {
+                              id(telegram_pending_action) = command == "/tacita" ? "tacita" : "reset_memorie";
+                              id(telegram_pending_code) = 1000 + (esp_random() % 9000);
+                              id(telegram_pending_user_id) = numeric_user_id;
+                              id(telegram_pending_chat_id) = numeric_chat_id;
+                              id(telegram_pending_expires_ms) = millis() + 60000;
+                              reply = "⚠️ Conferma richiesta per " + id(telegram_pending_action) +
+                                      ".\nEntro 60 secondi invia /conferma " +
+                                      std::to_string(id(telegram_pending_code)) +
+                                      "\nPer annullare: /annulla";
+                            }
+                          } else if (command == "/conferma") {
+                            bool pending_valid = !id(telegram_pending_action).empty() &&
+                                id(telegram_pending_user_id) == numeric_user_id &&
+                                id(telegram_pending_chat_id) == numeric_chat_id &&
+                                static_cast<int32_t>(id(telegram_pending_expires_ms) - millis()) > 0;
+                            int supplied_code = arguments.empty() ? 0 : atoi(arguments.c_str());
+                            if (!is_admin || !pending_valid || supplied_code != id(telegram_pending_code)) {
+                              reply = "⛔ Conferma non valida, scaduta o appartenente a un'altra sessione.";
+                            } else {
+                              std::string action = id(telegram_pending_action);
+                              if (action == "tacita") {
+                                id(telegram_execute_silence) = true;
+                                reply = "✅ Buzzer tacitato.";
+                              } else if (id(alarm_1).state || id(alarm_2).state) {
+                                reply = "⛔ Memorie non cancellate: almeno un allarme è attivo.";
+                              } else {
+                                id(telegram_execute_memory_reset) = true;
+                                reply = "✅ Memorie allarme cancellate.";
+                              }
+                              id(telegram_pending_action).clear();
+                              id(telegram_pending_code) = 0;
+                            }
+                          } else if (command == "/annulla") {
+                            bool owner = is_admin &&
+                                id(telegram_pending_user_id) == numeric_user_id &&
+                                id(telegram_pending_chat_id) == numeric_chat_id;
+                            if (owner && !id(telegram_pending_action).empty()) {
+                              id(telegram_pending_action).clear();
+                              id(telegram_pending_code) = 0;
+                              reply = "✅ Operazione annullata.";
+                            } else {
+                              reply = "Nessuna operazione confermabile per questo utente e questa chat.";
+                            }
                           } else if (command == "/help" || command == "/start") {
-                            reply = "🤖 COMANDI DISPONIBILI\n/stato - riepilogo generale\n/allarmi - ingressi e memorie\n/rete - IP e collegamenti\n/storico - collegamenti al registro\n/help - questo elenco";
+                            reply = "🤖 COMANDI DISPONIBILI\n/stato - riepilogo generale\n/allarmi - ingressi e memorie\n/rete - IP e collegamenti\n/storico - collegamenti al registro\n/tacita - admin, richiede conferma\n/reset_memorie - admin, richiede conferma\n/annulla - annulla conferma\n/help - questo elenco";
                           } else if (!command.empty() && command[0] == '/') {
                             reply = "Comando non riconosciuto. Usa /help.";
                           } else {
@@ -1228,18 +1341,38 @@ script:
 
                           id(telegram_command_name) = command;
                           id(telegram_command_reply) = reply;
+                          id(telegram_command_reply_chat_id) = chat_id;
                           id(telegram_command_reply_pending) = true;
-                          id(telegram_command_status_value) = "Eseguito " + command;
-                          id(event_log).log_event("TELEGRAM CMD", "Eseguito " + command);
+                          std::string audit = actor + " uid=" + user_id + " chat=" + chat_id + " cmd=" + command;
+                          id(telegram_command_status_value) = audit;
+                          id(event_log).log_event("TELEGRAM CMD", audit);
                           return true;
                         });
+                    - if:
+                        condition:
+                          lambda: return id(telegram_execute_silence);
+                        then:
+                          - rtttl.stop:
+                          - lambda: |-
+                              id(telegram_execute_silence) = false;
+                              id(event_log).log_event("COMANDO", "Buzzer tacitato da Telegram");
+                    - if:
+                        condition:
+                          lambda: return id(telegram_execute_memory_reset);
+                        then:
+                          - lambda: |-
+                              id(telegram_execute_memory_reset) = false;
+                              id(alarm_1_memory_value) = false;
+                              id(alarm_2_memory_value) = false;
+                              id(event_log).log_event("COMANDO", "Memorie cancellate da Telegram");
+                          - script.execute: update_status_led
                     - if:
                         condition:
                           lambda: return id(telegram_command_reply_pending);
                         then:
                           - script.execute:
-                              id: telegram_send
-                              event_name: !lambda return std::string("Comando ") + id(telegram_command_name);
+                              id: telegram_command_reply_send
+                              destination_chat_id: !lambda return id(telegram_command_reply_chat_id);
                               telegram_text: !lambda return id(telegram_command_reply);
                   else:
                     - lambda: |-
@@ -1588,6 +1721,32 @@ script:
                                   green: 100%
                                   blue: 0%
                                   effect: none
+
+  - id: telegram_command_reply_send
+    mode: queued
+    max_runs: 10
+    parameters:
+      destination_chat_id: string
+      telegram_text: string
+    then:
+      - http_request.post:
+          url: !secret telegram_send_url
+          capture_response: true
+          max_response_buffer_size: 512
+          request_headers:
+            accept: "application/json"
+            Content-Type: "application/json"
+          json:
+            chat_id: !lambda return destination_chat_id;
+            text: !lambda return telegram_text;
+          on_response:
+            then:
+              - lambda: |-
+                  id(telegram_command_status_value) +=
+                      " reply=" + std::to_string(response->status_code);
+          on_error:
+            then:
+              - lambda: id(telegram_command_status_value) += " reply=errore";
 
   - id: telegram_send
     mode: queued

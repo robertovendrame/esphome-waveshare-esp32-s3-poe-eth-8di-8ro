@@ -7,6 +7,11 @@ triggers:
       - POST
     local_only: false
 actions:
+  - variables:
+      expected_token: !secret alarm_collector_payload_token
+  - condition: template
+    value_template: >-
+      {{ trigger.json.auth_token | default('') == expected_token }}
   - action: logbook.log
     data:
       name: Alarm Contact Collector
