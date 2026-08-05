@@ -1,6 +1,7 @@
 substitutions:
   device_name: alarm-contact-collector
   friendly_name: "Alarm Contact Collector"
+  firmware_version: "0.8.3"
   central_1_name: "Centrale 1"
   central_2_name: "Centrale 2"
   brevo_sender_email: !secret brevo_sender_email
@@ -17,7 +18,7 @@ esphome:
   compile_process_limit: 1
   project:
     name: "roberto.alarm-contact-collector"
-    version: "0.8.2"
+    version: "${firmware_version}"
   on_boot:
     priority: -100
     then:
@@ -761,6 +762,7 @@ sensor:
     entity_category: diagnostic
     update_interval: 30s
   - platform: internal_temperature
+    id: esp_temperature
     name: "Temperatura ESP32"
     entity_category: diagnostic
     update_interval: 30s
@@ -850,6 +852,14 @@ text_sensor:
 
 button:
   - platform: template
+    name: "Invia heartbeat Home Assistant remoti"
+    icon: mdi:heart-pulse
+    on_press:
+      - script.execute:
+          id: remote_ha_send
+          event_name: "heartbeat"
+          event_message: "Heartbeat manuale"
+  - platform: template
     name: "Tacita buzzer"
     icon: mdi:volume-off
     on_press:
@@ -908,6 +918,16 @@ interval:
             - lambda: |-
                 auto now = id(board_rtc).now();
                 if (now.is_valid()) id(last_online_checkpoint) = now.timestamp;
+      - if:
+          condition:
+            or:
+              - switch.is_on: remote_ha_1_enabled
+              - switch.is_on: remote_ha_2_enabled
+          then:
+            - script.execute:
+                id: remote_ha_send
+                event_name: "heartbeat"
+                event_message: "Heartbeat periodico"
   - interval: 10s
     then:
       - if:
@@ -951,6 +971,12 @@ script:
                   root["memory_2"] = id(alarm_2_memory_value);
                   root["local_ip"] = id(ethernet_ip).state;
                   root["public_ip"] = id(public_ip_value);
+                  root["internet_available"] = id(internet_available);
+                  root["home_assistant_connected"] = id(native_api).is_connected();
+                  root["uptime_seconds"] = millis() / 1000;
+                  root["temperature_c"] = id(esp_temperature).state;
+                  root["last_ntp_sync"] = id(last_ntp_sync_value);
+                  root["firmware_version"] = "${firmware_version}";
                 on_response:
                   then:
                     - lambda: |-

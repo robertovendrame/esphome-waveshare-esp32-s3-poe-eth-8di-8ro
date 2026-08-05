@@ -24,5 +24,11 @@ actions:
       memory_2: "{{ trigger.json.memory_2 }}"
       local_ip: "{{ trigger.json.local_ip }}"
       public_ip: "{{ trigger.json.public_ip }}"
+      internet_available: "{{ trigger.json.internet_available }}"
+      home_assistant_connected: "{{ trigger.json.home_assistant_connected }}"
+      uptime_seconds: "{{ trigger.json.uptime_seconds }}"
+      temperature_c: "{{ trigger.json.temperature_c }}"
+      last_ntp_sync: "{{ trigger.json.last_ntp_sync }}"
+      firmware_version: "{{ trigger.json.firmware_version }}"
 mode: queued
 max: 20

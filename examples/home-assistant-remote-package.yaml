@@ -1,0 +1,68 @@
+# Copiare questo file nella cartella packages di Home Assistant e includerlo
+# dalla configurazione principale. Definire alarm_collector_webhook_id nei
+# secrets di questa istanza Home Assistant.
+
+input_datetime:
+  alarm_collector_last_seen:
+    name: Alarm Collector - Ultimo contatto
+    has_date: true
+    has_time: true
+
+input_text:
+  alarm_collector_last_event:
+    name: Alarm Collector - Ultimo evento
+    max: 255
+
+automation:
+  - alias: Alarm Collector - Ricezione webhook
+    id: alarm_collector_webhook_receiver
+    triggers:
+      - trigger: webhook
+        webhook_id: !secret alarm_collector_webhook_id
+        allowed_methods:
+          - POST
+        local_only: false
+    actions:
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.alarm_collector_last_seen
+        data:
+          timestamp: "{{ now().timestamp() }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.alarm_collector_last_event
+        data:
+          value: >-
+            {{ trigger.json.event }}: {{ trigger.json.message }}
+      - if:
+          - condition: template
+            value_template: "{{ trigger.json.event != 'heartbeat' }}"
+        then:
+          - action: logbook.log
+            data:
+              name: Alarm Contact Collector
+              message: >-
+                {{ trigger.json.event }}: {{ trigger.json.message }}
+      - event: alarm_contact_collector_event
+        event_data:
+          payload: "{{ trigger.json | to_json }}"
+    mode: queued
+    max: 20
+
+template:
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/1"
+      - trigger: homeassistant
+        event: start
+    binary_sensor:
+      - name: Alarm Collector collegato
+        unique_id: alarm_collector_remote_connected
+        device_class: connectivity
+        state: >-
+          {% set seen = states('input_datetime.alarm_collector_last_seen') %}
+          {{ seen not in ['unknown', 'unavailable', ''] and
+             (as_timestamp(now()) - as_timestamp(seen)) < 900 }}
+        availability: >-
+          {{ states('input_datetime.alarm_collector_last_seen') not in
+             ['unknown', 'unavailable', ''] }}
