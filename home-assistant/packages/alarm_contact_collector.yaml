@@ -1,0 +1,161 @@
+# Copiare questo stesso package su ogni istanza Home Assistant remota.
+# I valori alarm_collector_webhook_id e alarm_collector_payload_token devono
+# essere diversi in ciascun secrets.yaml.
+
+input_text:
+  alarm_collector_ultimo_evento:
+    name: Alarm Collector - Ultimo evento
+    icon: mdi:history
+    max: 100
+  alarm_collector_ultimo_messaggio:
+    name: Alarm Collector - Ultimo messaggio
+    icon: mdi:message-alert-outline
+    max: 255
+  alarm_collector_ultimo_aggiornamento:
+    name: Alarm Collector - Ultimo aggiornamento
+    icon: mdi:clock-outline
+    max: 64
+  alarm_collector_dispositivo:
+    name: Alarm Collector - Dispositivo
+    icon: mdi:chip
+    max: 64
+  alarm_collector_ip_locale:
+    name: Alarm Collector - IP locale
+    icon: mdi:ip-network-outline
+    max: 64
+  alarm_collector_ip_pubblico:
+    name: Alarm Collector - IP pubblico
+    icon: mdi:web
+    max: 64
+
+input_boolean:
+  alarm_collector_allarme_1:
+    name: Alarm Collector - Allarme 1
+    icon: mdi:alarm-light
+  alarm_collector_allarme_2:
+    name: Alarm Collector - Allarme 2
+    icon: mdi:alarm-light
+  alarm_collector_memoria_1:
+    name: Alarm Collector - Memoria 1
+    icon: mdi:alert-decagram-outline
+  alarm_collector_memoria_2:
+    name: Alarm Collector - Memoria 2
+    icon: mdi:alert-decagram-outline
+
+counter:
+  alarm_collector_eventi_ricevuti:
+    name: Alarm Collector - Eventi ricevuti
+    icon: mdi:counter
+    initial: 0
+    step: 1
+    restore: true
+
+template:
+  - binary_sensor:
+      - name: Alarm Collector - Collegamento recente
+        unique_id: alarm_collector_collegamento_recente
+        device_class: connectivity
+        state: >-
+          {{ states('input_text.alarm_collector_ultimo_aggiornamento') not in
+             ['unknown', 'unavailable', 'Mai', ''] and
+             (now() - states.input_text.alarm_collector_ultimo_aggiornamento.last_changed).total_seconds() < 900 }}
+  - sensor:
+      - name: Alarm Collector - Stato generale
+        unique_id: alarm_collector_stato_generale
+        icon: mdi:shield-home-outline
+        state: >-
+          {% if is_state('input_boolean.alarm_collector_allarme_1', 'on') or
+                is_state('input_boolean.alarm_collector_allarme_2', 'on') %}
+            Allarme
+          {% elif is_state('input_boolean.alarm_collector_memoria_1', 'on') or
+                  is_state('input_boolean.alarm_collector_memoria_2', 'on') %}
+            Ripristinato - memoria presente
+          {% else %}
+            Normale
+          {% endif %}
+
+automation:
+  - id: alarm_collector_ricezione_webhook
+    alias: Alarm Collector - Ricezione webhook
+    description: Aggiorna le entità locali con gli eventi ricevuti dal concentratore
+    variables:
+      expected_payload_token: !secret alarm_collector_payload_token
+    triggers:
+      - trigger: webhook
+        webhook_id: !secret alarm_collector_webhook_id
+        allowed_methods:
+          - POST
+        local_only: false
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ trigger.json is defined and
+             trigger.json.device | default('') == 'alarm-contact-collector' and
+             trigger.json.auth_token | default('') ==
+               expected_payload_token }}
+    actions:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.alarm_collector_ultimo_evento
+        data:
+          value: "{{ trigger.json.event | default('sconosciuto') | string | truncate(100, true, '') }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.alarm_collector_ultimo_messaggio
+        data:
+          value: "{{ trigger.json.message | default('') | string | truncate(255, true, '') }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.alarm_collector_ultimo_aggiornamento
+        data:
+          value: "{{ trigger.json.timestamp | default(now().isoformat()) | string | truncate(64, true, '') }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.alarm_collector_dispositivo
+        data:
+          value: "{{ trigger.json.device | default('alarm-contact-collector') | string | truncate(64, true, '') }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.alarm_collector_ip_locale
+        data:
+          value: "{{ trigger.json.local_ip | default('non disponibile') | string | truncate(64, true, '') }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.alarm_collector_ip_pubblico
+        data:
+          value: "{{ trigger.json.public_ip | default('non disponibile') | string | truncate(64, true, '') }}"
+      - action: "{{ 'input_boolean.turn_on' if trigger.json.alarm_1 | default(false) | bool else 'input_boolean.turn_off' }}"
+        target:
+          entity_id: input_boolean.alarm_collector_allarme_1
+      - action: "{{ 'input_boolean.turn_on' if trigger.json.alarm_2 | default(false) | bool else 'input_boolean.turn_off' }}"
+        target:
+          entity_id: input_boolean.alarm_collector_allarme_2
+      - action: "{{ 'input_boolean.turn_on' if trigger.json.memory_1 | default(false) | bool else 'input_boolean.turn_off' }}"
+        target:
+          entity_id: input_boolean.alarm_collector_memoria_1
+      - action: "{{ 'input_boolean.turn_on' if trigger.json.memory_2 | default(false) | bool else 'input_boolean.turn_off' }}"
+        target:
+          entity_id: input_boolean.alarm_collector_memoria_2
+      - action: counter.increment
+        target:
+          entity_id: counter.alarm_collector_eventi_ricevuti
+      - action: logbook.log
+        data:
+          name: Alarm Contact Collector
+          message: >-
+            {{ trigger.json.event | default('Evento') }}:
+            {{ trigger.json.message | default('Nessun dettaglio') }}
+      - event: alarm_contact_collector_event
+        event_data:
+          device: "{{ trigger.json.device | default('') }}"
+          event: "{{ trigger.json.event | default('') }}"
+          message: "{{ trigger.json.message | default('') }}"
+          timestamp: "{{ trigger.json.timestamp | default('') }}"
+          alarm_1: "{{ trigger.json.alarm_1 | default(false) }}"
+          alarm_2: "{{ trigger.json.alarm_2 | default(false) }}"
+          memory_1: "{{ trigger.json.memory_1 | default(false) }}"
+          memory_2: "{{ trigger.json.memory_2 | default(false) }}"
+          local_ip: "{{ trigger.json.local_ip | default('') }}"
+          public_ip: "{{ trigger.json.public_ip | default('') }}"
+    mode: queued
+    max: 20

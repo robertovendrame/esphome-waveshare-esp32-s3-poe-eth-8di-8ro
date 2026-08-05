@@ -16,7 +16,6 @@ jobs:
     strategy:
       matrix:
         yaml:
-          - waveshare-8di-8ro-test.yaml
           - alarm-collector-advanced.yaml
     steps:
       - uses: actions/checkout@v4

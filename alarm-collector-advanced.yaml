@@ -1,12 +1,19 @@
 substitutions:
   device_name: alarm-contact-collector
   friendly_name: "Alarm Contact Collector"
+  firmware_version: "1.0.0-rc2"
   central_1_name: "Centrale 1"
   central_2_name: "Centrale 2"
   brevo_sender_email: !secret brevo_sender_email
   brevo_sender_name: !secret brevo_sender_name
   brevo_recipient_email: !secret brevo_recipient_email
   brevo_recipient_name: !secret brevo_recipient_name
+  telegram_updates_url: !secret telegram_updates_url
+  telegram_authorized_chat_id: !secret telegram_chat_id
+  telegram_authorized_group_id: !secret telegram_authorized_group_id
+  telegram_admin_user_ids: !secret telegram_admin_user_ids
+  ha_remote_1_webhook_token: !secret ha_remote_1_webhook_token
+  ha_remote_2_webhook_token: !secret ha_remote_2_webhook_token
 
 esphome:
   name: ${device_name}
@@ -15,7 +22,7 @@ esphome:
   compile_process_limit: 1
   project:
     name: "roberto.alarm-contact-collector"
-    version: "0.5.0"
+    version: "${firmware_version}"
   on_boot:
     priority: -100
     then:
@@ -28,6 +35,16 @@ esphome:
       - switch.turn_off: relay_7_internal
       - switch.turn_off: relay_8_internal
       - pcf85063.read_time:
+      - lambda: |-
+          auto now = id(board_rtc).now();
+          id(boot_count) += 1;
+          id(boot_event_name) = id(boot_count) == 1 ? "Primo avvio" : "Riavvio";
+          if (now.is_valid() && id(last_online_checkpoint) > 0 &&
+              now.timestamp >= id(last_online_checkpoint)) {
+            id(boot_offline_seconds) = now.timestamp - id(last_online_checkpoint);
+          } else {
+            id(boot_offline_seconds) = -1;
+          }
       - lambda: id(event_log).log_boot();
       - text_sensor.template.publish:
           id: telegram_status
@@ -38,11 +55,17 @@ esphome:
       - script.execute: update_status_led
       - delay: 5s
       - lambda: id(startup_complete) = true;
+  on_shutdown:
+    then:
+      - lambda: |-
+          auto now = id(board_rtc).now();
+          if (now.is_valid()) id(last_online_checkpoint) = now.timestamp;
 
 external_components:
-  - source: github://robertovendrame/esphome-waveshare-esp32-s3-poe-eth-8di-8ro@main
+  - source:
+      type: local
+      path: components
     components: [event_history]
-    refresh: 0s
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -109,54 +132,49 @@ ethernet:
             - lambda: id(ethernet_ever_connected) = true;
             - lambda: id(event_log).log_event("RETE", "Ethernet collegata");
             - delay: 2s
-            - if:
-                condition:
-                  switch.is_on: telegram_enabled
-                then:
-                  - script.execute:
-                      id: telegram_send
-                      event_name: "Avvio"
-                      telegram_text: "🟢 Alarm Contact Collector avviato e collegato alla rete."
-            - if:
-                condition:
-                  switch.is_on: brevo_enabled
-                then:
-                  - script.execute:
-                      id: brevo_send
-                      subject: "Alarm Contact Collector avviato"
-                      message: "Il concentratore allarmi è avviato e collegato alla rete."
-                      event_name: "Avvio"
+            - script.execute:
+                id: network_report
+                event_name: !lambda return id(boot_event_name);
+                intro: !lambda |-
+                  return id(boot_event_name) + std::string(" - causa: ") +
+                         id(event_log).reset_reason_text();
+                offline_seconds: !lambda return static_cast<int>(id(boot_offline_seconds));
+            - lambda: |-
+                auto now = id(board_rtc).now();
+                if (now.is_valid()) id(last_online_checkpoint) = now.timestamp;
           else:
             - if:
                 condition:
                   lambda: return id(ethernet_lost);
                 then:
-                  - lambda: id(ethernet_lost) = false;
+                  - lambda: |-
+                      auto now = id(board_rtc).now();
+                      if (now.is_valid() && id(ethernet_outage_started) > 0 &&
+                          now.timestamp >= id(ethernet_outage_started)) {
+                        id(last_outage_seconds) = now.timestamp - id(ethernet_outage_started);
+                      } else {
+                        id(last_outage_seconds) = -1;
+                      }
+                      id(ethernet_lost) = false;
                   - lambda: id(event_log).log_event("RETE", "Connessione Ethernet ripristinata");
-                  - if:
-                      condition:
-                        switch.is_on: telegram_enabled
-                      then:
-                        - script.execute:
-                            id: telegram_send
-                            event_name: "Ethernet ripristinata"
-                            telegram_text: "🟢 Connessione Ethernet ripristinata."
-                  - if:
-                      condition:
-                        switch.is_on: brevo_enabled
-                      then:
-                        - script.execute:
-                            id: brevo_send
-                            subject: "Ethernet ripristinata"
-                            message: "La connessione Ethernet del concentratore è stata ripristinata."
-                            event_name: "Ethernet ripristinata"
+                  - script.execute:
+                      id: network_report
+                      event_name: "Ethernet ripristinata"
+                      intro: "Connessione Ethernet ripristinata"
+                      offline_seconds: !lambda return static_cast<int>(id(last_outage_seconds));
+                  - lambda: |-
+                      auto now = id(board_rtc).now();
+                      if (now.is_valid()) id(last_online_checkpoint) = now.timestamp;
   on_disconnect:
     then:
       - if:
           condition:
             lambda: return id(ethernet_ever_connected);
           then:
-            - lambda: id(ethernet_lost) = true;
+            - lambda: |-
+                id(ethernet_lost) = true;
+                auto now = id(board_rtc).now();
+                id(ethernet_outage_started) = now.is_valid() ? now.timestamp : 0;
       - script.execute: update_status_led
       - delay: 10s
       - if:
@@ -170,6 +188,8 @@ http_request:
   timeout: 10s
   verify_ssl: true
   follow_redirects: true
+
+json:
 
 i2c:
   id: main_i2c
@@ -189,15 +209,157 @@ time:
     i2c_id: main_i2c
     address: 0x51
     update_interval: never
-  - platform: homeassistant
-    id: ha_time
+  - platform: sntp
+    id: network_time
     timezone: Europe/Rome
+    servers:
+      - 0.it.pool.ntp.org
+      - 1.it.pool.ntp.org
+      - time.cloudflare.com
+    update_interval: 6h
     on_time_sync:
       then:
         - pcf85063.write_time:
             id: board_rtc
+        - lambda: |-
+            auto now = id(network_time).now();
+            id(last_ntp_sync_value) =
+                now.is_valid() ? now.strftime("%d/%m/%Y %H:%M:%S") : "Ora non valida";
+            id(event_log).log_event("OROLOGIO", "Ora sincronizzata tramite NTP e salvata nel RTC");
 
 globals:
+  - id: boot_count
+    type: uint32_t
+    restore_value: true
+    initial_value: "0"
+  - id: boot_event_name
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: last_online_checkpoint
+    type: int64_t
+    restore_value: true
+    initial_value: "0"
+  - id: boot_offline_seconds
+    type: int64_t
+    restore_value: false
+    initial_value: "-1"
+  - id: ethernet_outage_started
+    type: int64_t
+    restore_value: false
+    initial_value: "0"
+  - id: last_outage_seconds
+    type: int64_t
+    restore_value: false
+    initial_value: "-1"
+  - id: public_ip_value
+    type: std::string
+    restore_value: false
+    initial_value: '"non disponibile"'
+  - id: network_report_event
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: network_report_intro
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: network_report_offline_seconds
+    type: int
+    restore_value: false
+    initial_value: "-1"
+  - id: network_report_message
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: internet_available
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: internet_probe_success
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: internet_retry_count
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: internet_status_value
+    type: std::string
+    restore_value: false
+    initial_value: '"In attesa della rete"'
+  - id: last_ntp_sync_value
+    type: std::string
+    restore_value: false
+    initial_value: '"In attesa"'
+  - id: telegram_update_offset
+    type: int64_t
+    restore_value: true
+    initial_value: "0"
+  - id: telegram_command_reply_pending
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: telegram_command_name
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: telegram_command_reply
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: telegram_command_reply_chat_id
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: telegram_pending_action
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: telegram_pending_code
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: telegram_pending_user_id
+    type: int64_t
+    restore_value: false
+    initial_value: "0"
+  - id: telegram_pending_chat_id
+    type: int64_t
+    restore_value: false
+    initial_value: "0"
+  - id: telegram_pending_expires_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: telegram_execute_silence
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: telegram_execute_memory_reset
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: telegram_command_status_value
+    type: std::string
+    restore_value: false
+    initial_value: '"In attesa"'
+  - id: remote_ha_event
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: remote_ha_message
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: remote_ha_1_status_value
+    type: std::string
+    restore_value: false
+    initial_value: '"Disabilitato"'
+  - id: remote_ha_2_status_value
+    type: std::string
+    restore_value: false
+    initial_value: '"Disabilitato"'
   - id: startup_complete
     type: bool
     restore_value: false
@@ -350,6 +512,24 @@ switch:
     icon: mdi:email-fast-outline
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
+  - platform: template
+    id: telegram_commands_enabled
+    name: "Comandi Telegram abilitati"
+    icon: mdi:message-text-lock-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: template
+    id: remote_ha_1_enabled
+    name: "Invio Home Assistant remoto 1"
+    icon: mdi:home-export-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: template
+    id: remote_ha_2_enabled
+    name: "Invio Home Assistant remoto 2"
+    icon: mdi:home-export-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
 
   # Uscite fisiche mantenute interne e sempre spente in questo firmware.
   - platform: gpio
@@ -619,6 +799,7 @@ sensor:
     entity_category: diagnostic
     update_interval: 30s
   - platform: internal_temperature
+    id: esp_temperature
     name: "Temperatura ESP32"
     entity_category: diagnostic
     update_interval: 30s
@@ -664,8 +845,39 @@ text_sensor:
     entity_category: diagnostic
     lambda: return {"Nessun invio"};
     update_interval: never
+  - platform: template
+    name: "Ultima sincronizzazione NTP"
+    icon: mdi:clock-check-outline
+    entity_category: diagnostic
+    lambda: return id(last_ntp_sync_value);
+    update_interval: 30s
+  - platform: template
+    name: "Stato connessione Internet"
+    icon: mdi:web-check
+    entity_category: diagnostic
+    lambda: return id(internet_status_value);
+    update_interval: 10s
+  - platform: template
+    name: "Ultimo comando Telegram"
+    icon: mdi:message-processing-outline
+    entity_category: diagnostic
+    lambda: return id(telegram_command_status_value);
+    update_interval: 10s
+  - platform: template
+    name: "Ultimo invio Home Assistant remoto 1"
+    icon: mdi:cloud-check-outline
+    entity_category: diagnostic
+    lambda: return id(remote_ha_1_status_value);
+    update_interval: 10s
+  - platform: template
+    name: "Ultimo invio Home Assistant remoto 2"
+    icon: mdi:cloud-check-outline
+    entity_category: diagnostic
+    lambda: return id(remote_ha_2_status_value);
+    update_interval: 10s
   - platform: ethernet_info
     ip_address:
+      id: ethernet_ip
       name: "Indirizzo IP Ethernet"
       entity_category: diagnostic
     mac_address:
@@ -676,6 +888,14 @@ text_sensor:
     entity_category: diagnostic
 
 button:
+  - platform: template
+    name: "Invia heartbeat Home Assistant remoti"
+    icon: mdi:heart-pulse
+    on_press:
+      - script.execute:
+          id: remote_ha_send
+          event_name: "heartbeat"
+          event_message: "Heartbeat manuale"
   - platform: template
     name: "Tacita buzzer"
     icon: mdi:volume-off
@@ -726,8 +946,597 @@ interval:
   - interval: 5s
     then:
       - script.execute: update_status_led
+  - interval: 5min
+    then:
+      - if:
+          condition:
+            lambda: return id(ethernet_ever_connected) && !id(ethernet_lost);
+          then:
+            - lambda: |-
+                auto now = id(board_rtc).now();
+                if (now.is_valid()) id(last_online_checkpoint) = now.timestamp;
+      - if:
+          condition:
+            or:
+              - switch.is_on: remote_ha_1_enabled
+              - switch.is_on: remote_ha_2_enabled
+          then:
+            - script.execute:
+                id: remote_ha_send
+                event_name: "heartbeat"
+                event_message: "Heartbeat periodico"
+  - interval: 10s
+    then:
+      - if:
+          condition:
+            and:
+              - switch.is_on: telegram_commands_enabled
+              - lambda: return id(ethernet_ever_connected) && !id(ethernet_lost);
+          then:
+            - script.execute: telegram_poll
 
 script:
+  - id: remote_ha_send
+    mode: queued
+    max_runs: 20
+    parameters:
+      event_name: string
+      event_message: string
+    then:
+      - if:
+          condition:
+            switch.is_on: remote_ha_1_enabled
+          then:
+            - script.execute:
+                id: remote_ha_1_delivery
+                event_name: !lambda return event_name;
+                event_message: !lambda return event_message;
+                retry_count: 0
+      - if:
+          condition:
+            switch.is_on: remote_ha_2_enabled
+          then:
+            - script.execute:
+                id: remote_ha_2_delivery
+                event_name: !lambda return event_name;
+                event_message: !lambda return event_message;
+                retry_count: 0
+
+  - id: remote_ha_1_delivery
+    mode: queued
+    max_runs: 20
+    parameters: &remote_delivery_parameters
+      event_name: string
+      event_message: string
+      retry_count: int
+    then:
+      - http_request.post:
+          url: !secret ha_remote_1_webhook_url
+          capture_response: true
+          max_response_buffer_size: 256
+          request_headers:
+            Content-Type: "application/json"
+          json: &remote_ha_payload |-
+            auto now = id(board_rtc).now();
+            root["device"] = "${device_name}";
+            root["event"] = event_name;
+            root["message"] = event_message;
+            root["timestamp"] = now.is_valid() ? now.strftime("%Y-%m-%dT%H:%M:%S%z") : "";
+            root["alarm_1"] = id(alarm_1).state;
+            root["alarm_2"] = id(alarm_2).state;
+            root["memory_1"] = id(alarm_1_memory_value);
+            root["memory_2"] = id(alarm_2_memory_value);
+            root["local_ip"] = id(ethernet_ip).state;
+            root["public_ip"] = id(public_ip_value);
+            root["internet_available"] = id(internet_available);
+            root["home_assistant_connected"] = id(native_api).is_connected();
+            root["uptime_seconds"] = millis() / 1000;
+            root["temperature_c"] = id(esp_temperature).state;
+            root["last_ntp_sync"] = id(last_ntp_sync_value);
+            root["firmware_version"] = "${firmware_version}";
+            root["delivery_attempt"] = retry_count + 1;
+            root["auth_token"] = "${ha_remote_1_webhook_token}";
+          on_response:
+            then:
+              - if:
+                  condition:
+                    lambda: return response->status_code >= 200 && response->status_code < 300;
+                  then:
+                    - lambda: |-
+                        id(remote_ha_1_status_value) = event_name + ": consegnato HTTP " +
+                            std::to_string(response->status_code) + " al tentativo " +
+                            std::to_string(retry_count + 1);
+                        id(event_log).log_event("HA REMOTO 1", id(remote_ha_1_status_value));
+                  else:
+                    - if:
+                        condition:
+                          lambda: |-
+                            int code = response->status_code;
+                            return retry_count < 48 &&
+                                   (code == 408 || code == 425 || code == 429 || code >= 500);
+                        then:
+                          - script.execute:
+                              id: remote_ha_1_retry
+                              event_name: !lambda return event_name;
+                              event_message: !lambda return event_message;
+                              retry_count: !lambda return retry_count + 1;
+                        else:
+                          - lambda: |-
+                              id(remote_ha_1_status_value) = event_name + ": errore permanente HTTP " +
+                                  std::to_string(response->status_code);
+                              id(event_log).log_event("HA REMOTO 1", id(remote_ha_1_status_value));
+          on_error:
+            then:
+              - if:
+                  condition:
+                    lambda: return retry_count < 48;
+                  then:
+                    - script.execute:
+                        id: remote_ha_1_retry
+                        event_name: !lambda return event_name;
+                        event_message: !lambda return event_message;
+                        retry_count: !lambda return retry_count + 1;
+                  else:
+                    - lambda: |-
+                        id(remote_ha_1_status_value) = event_name + ": abbandonato dopo 49 tentativi";
+                        id(event_log).log_event("HA REMOTO 1", id(remote_ha_1_status_value));
+
+  - id: remote_ha_2_delivery
+    mode: queued
+    max_runs: 20
+    parameters: *remote_delivery_parameters
+    then:
+      - http_request.post:
+          url: !secret ha_remote_2_webhook_url
+          capture_response: true
+          max_response_buffer_size: 256
+          request_headers:
+            Content-Type: "application/json"
+          json: |-
+            auto now = id(board_rtc).now();
+            root["device"] = "${device_name}";
+            root["event"] = event_name;
+            root["message"] = event_message;
+            root["timestamp"] = now.is_valid() ? now.strftime("%Y-%m-%dT%H:%M:%S%z") : "";
+            root["alarm_1"] = id(alarm_1).state;
+            root["alarm_2"] = id(alarm_2).state;
+            root["memory_1"] = id(alarm_1_memory_value);
+            root["memory_2"] = id(alarm_2_memory_value);
+            root["local_ip"] = id(ethernet_ip).state;
+            root["public_ip"] = id(public_ip_value);
+            root["internet_available"] = id(internet_available);
+            root["home_assistant_connected"] = id(native_api).is_connected();
+            root["uptime_seconds"] = millis() / 1000;
+            root["temperature_c"] = id(esp_temperature).state;
+            root["last_ntp_sync"] = id(last_ntp_sync_value);
+            root["firmware_version"] = "${firmware_version}";
+            root["delivery_attempt"] = retry_count + 1;
+            root["auth_token"] = "${ha_remote_2_webhook_token}";
+          on_response:
+            then:
+              - if:
+                  condition:
+                    lambda: return response->status_code >= 200 && response->status_code < 300;
+                  then:
+                    - lambda: |-
+                        id(remote_ha_2_status_value) = event_name + ": consegnato HTTP " +
+                            std::to_string(response->status_code) + " al tentativo " +
+                            std::to_string(retry_count + 1);
+                        id(event_log).log_event("HA REMOTO 2", id(remote_ha_2_status_value));
+                  else:
+                    - if:
+                        condition:
+                          lambda: |-
+                            int code = response->status_code;
+                            return retry_count < 48 &&
+                                   (code == 408 || code == 425 || code == 429 || code >= 500);
+                        then:
+                          - script.execute:
+                              id: remote_ha_2_retry
+                              event_name: !lambda return event_name;
+                              event_message: !lambda return event_message;
+                              retry_count: !lambda return retry_count + 1;
+                        else:
+                          - lambda: |-
+                              id(remote_ha_2_status_value) = event_name + ": errore permanente HTTP " +
+                                  std::to_string(response->status_code);
+                              id(event_log).log_event("HA REMOTO 2", id(remote_ha_2_status_value));
+          on_error:
+            then:
+              - if:
+                  condition:
+                    lambda: return retry_count < 48;
+                  then:
+                    - script.execute:
+                        id: remote_ha_2_retry
+                        event_name: !lambda return event_name;
+                        event_message: !lambda return event_message;
+                        retry_count: !lambda return retry_count + 1;
+                  else:
+                    - lambda: |-
+                        id(remote_ha_2_status_value) = event_name + ": abbandonato dopo 49 tentativi";
+                        id(event_log).log_event("HA REMOTO 2", id(remote_ha_2_status_value));
+
+  - id: remote_ha_1_retry
+    mode: parallel
+    max_runs: 20
+    parameters: *remote_delivery_parameters
+    then:
+      - lambda: |-
+          id(remote_ha_1_status_value) = event_name + ": in coda, tentativo " +
+              std::to_string(retry_count + 1);
+      - delay: !lambda |-
+          int seconds = retry_count <= 1 ? 30 : retry_count == 2 ? 60 : retry_count == 3 ? 120 : 300;
+          return seconds * 1000;
+      - script.execute:
+          id: remote_ha_1_delivery
+          event_name: !lambda return event_name;
+          event_message: !lambda return event_message;
+          retry_count: !lambda return retry_count;
+
+  - id: remote_ha_2_retry
+    mode: parallel
+    max_runs: 20
+    parameters: *remote_delivery_parameters
+    then:
+      - lambda: |-
+          id(remote_ha_2_status_value) = event_name + ": in coda, tentativo " +
+              std::to_string(retry_count + 1);
+      - delay: !lambda |-
+          int seconds = retry_count <= 1 ? 30 : retry_count == 2 ? 60 : retry_count == 3 ? 120 : 300;
+          return seconds * 1000;
+      - script.execute:
+          id: remote_ha_2_delivery
+          event_name: !lambda return event_name;
+          event_message: !lambda return event_message;
+          retry_count: !lambda return retry_count;
+
+  - id: telegram_poll
+    mode: single
+    then:
+      - lambda: id(telegram_command_reply_pending) = false;
+      - http_request.get:
+          url: !lambda |-
+            return std::string("${telegram_updates_url}?offset=") +
+                   std::to_string(id(telegram_update_offset)) + "&limit=1&timeout=0";
+          capture_response: true
+          max_response_buffer_size: 2048
+          request_headers:
+            accept: "application/json"
+          on_response:
+            then:
+              - if:
+                  condition:
+                    lambda: return response->status_code == 200;
+                  then:
+                    - lambda: |-
+                        json::parse_json(body, [](JsonObject root) -> bool {
+                          JsonArray results = root["result"].as<JsonArray>();
+                          if (results.isNull() || results.size() == 0) return true;
+
+                          JsonObject update = results[0].as<JsonObject>();
+                          int64_t update_id = update["update_id"].as<int64_t>();
+                          if (update_id >= id(telegram_update_offset)) {
+                            id(telegram_update_offset) = update_id + 1;
+                          }
+
+                          JsonObject message = update["message"].as<JsonObject>();
+                          if (message.isNull() || !message["text"].is<const char *>()) return true;
+
+                          int64_t numeric_chat_id = message["chat"]["id"].as<int64_t>();
+                          int64_t numeric_user_id = message["from"]["id"].as<int64_t>();
+                          std::string chat_id = std::to_string(numeric_chat_id);
+                          std::string user_id = std::to_string(numeric_user_id);
+                          std::string username = message["from"]["username"] | "";
+                          std::string first_name = message["from"]["first_name"] | "utente";
+                          std::string actor = username.empty() ? first_name : "@" + username;
+                          std::string text = message["text"].as<std::string>();
+                          bool authorized_chat = chat_id == "${telegram_authorized_chat_id}" ||
+                                                 chat_id == "${telegram_authorized_group_id}";
+                          if (!authorized_chat) {
+                            std::string audit = "RIFIUTATO uid=" + user_id + " chat=" + chat_id;
+                            id(telegram_command_status_value) = audit;
+                            id(event_log).log_event("TELEGRAM CMD", audit);
+                            return true;
+                          }
+
+                          size_t space = text.find(' ');
+                          std::string command = text.substr(0, space);
+                          std::string arguments = space == std::string::npos ? "" : text.substr(space + 1);
+                          size_t at = command.find('@');
+                          if (at != std::string::npos) command.resize(at);
+                          for (auto &character : command) {
+                            if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
+                          }
+
+                          std::string admin_ids = "${telegram_admin_user_ids}";
+                          bool is_admin = false;
+                          size_t admin_start = 0;
+                          while (admin_start <= admin_ids.size()) {
+                            size_t admin_end = admin_ids.find(',', admin_start);
+                            std::string admin_id = admin_ids.substr(
+                                admin_start,
+                                admin_end == std::string::npos ? std::string::npos
+                                                               : admin_end - admin_start);
+                            size_t first = admin_id.find_first_not_of(" \t\r\n");
+                            size_t last = admin_id.find_last_not_of(" \t\r\n");
+                            if (first != std::string::npos) {
+                              admin_id = admin_id.substr(first, last - first + 1);
+                              if (admin_id == user_id) {
+                                is_admin = true;
+                                break;
+                              }
+                            }
+                            if (admin_end == std::string::npos) break;
+                            admin_start = admin_end + 1;
+                          }
+                          std::string reply;
+                          if (command == "/stato") {
+                            uint32_t uptime = millis() / 1000;
+                            char value[320];
+                            snprintf(value, sizeof(value),
+                                     "📟 STATO CONCENTRATORE\nCentrale 1: %s\nCentrale 2: %s\nMemoria 1: %s\nMemoria 2: %s\nHome Assistant: %s\nUptime: %lu s",
+                                     id(alarm_1).state ? "ALLARME" : "normale",
+                                     id(alarm_2).state ? "ALLARME" : "normale",
+                                     id(alarm_1_memory_value) ? "presente" : "vuota",
+                                     id(alarm_2_memory_value) ? "presente" : "vuota",
+                                     id(native_api).is_connected() ? "collegato" : "scollegato",
+                                     static_cast<unsigned long>(uptime));
+                            reply = value;
+                          } else if (command == "/allarmi") {
+                            char value[320];
+                            snprintf(value, sizeof(value),
+                                     "🚨 ALLARMI\nCentrale 1: %s - conteggio %d\nUltimo evento 1: %s\nCentrale 2: %s - conteggio %d\nUltimo evento 2: %s",
+                                     id(alarm_1).state ? "ATTIVO" : "normale",
+                                     id(alarm_1_count_value), id(alarm_1_last_event_value).c_str(),
+                                     id(alarm_2).state ? "ATTIVO" : "normale",
+                                     id(alarm_2_count_value), id(alarm_2_last_event_value).c_str());
+                            reply = value;
+                          } else if (command == "/rete") {
+                            std::string local_ip = id(ethernet_ip).state;
+                            if (local_ip.empty()) local_ip = "non disponibile";
+                            reply = "🌐 RETE\nIP locale: " + local_ip +
+                                    "\nIP pubblico: " + id(public_ip_value) +
+                                    "\nHome Assistant: " +
+                                    (id(native_api).is_connected() ? "collegato" : "scollegato") +
+                                    "\nUltimo NTP: " + id(last_ntp_sync_value);
+                          } else if (command == "/storico") {
+                            std::string local_ip = id(ethernet_ip).state;
+                            reply = "📚 STORICO EVENTI\nPagina: http://" + local_ip +
+                                    "/history\nCSV: http://" + local_ip + "/history.csv" +
+                                    "\nJSON: http://" + local_ip + "/history.json";
+                          } else if (command == "/tacita" || command == "/reset_memorie") {
+                            if (!is_admin) {
+                              reply = "⛔ Operazione riservata all'amministratore.";
+                            } else {
+                              id(telegram_pending_action) = command == "/tacita" ? "tacita" : "reset_memorie";
+                              id(telegram_pending_code) = 1000 + (esp_random() % 9000);
+                              id(telegram_pending_user_id) = numeric_user_id;
+                              id(telegram_pending_chat_id) = numeric_chat_id;
+                              id(telegram_pending_expires_ms) = millis() + 60000;
+                              reply = "⚠️ Conferma richiesta per " + id(telegram_pending_action) +
+                                      ".\nEntro 60 secondi invia /conferma " +
+                                      std::to_string(id(telegram_pending_code)) +
+                                      "\nPer annullare: /annulla";
+                            }
+                          } else if (command == "/conferma") {
+                            bool pending_valid = !id(telegram_pending_action).empty() &&
+                                id(telegram_pending_user_id) == numeric_user_id &&
+                                id(telegram_pending_chat_id) == numeric_chat_id &&
+                                static_cast<int32_t>(id(telegram_pending_expires_ms) - millis()) > 0;
+                            int supplied_code = arguments.empty() ? 0 : atoi(arguments.c_str());
+                            if (!is_admin || !pending_valid || supplied_code != id(telegram_pending_code)) {
+                              reply = "⛔ Conferma non valida, scaduta o appartenente a un'altra sessione.";
+                            } else {
+                              std::string action = id(telegram_pending_action);
+                              if (action == "tacita") {
+                                id(telegram_execute_silence) = true;
+                                reply = "✅ Buzzer tacitato.";
+                              } else if (id(alarm_1).state || id(alarm_2).state) {
+                                reply = "⛔ Memorie non cancellate: almeno un allarme è attivo.";
+                              } else {
+                                id(telegram_execute_memory_reset) = true;
+                                reply = "✅ Memorie allarme cancellate.";
+                              }
+                              id(telegram_pending_action).clear();
+                              id(telegram_pending_code) = 0;
+                            }
+                          } else if (command == "/annulla") {
+                            bool owner = is_admin &&
+                                id(telegram_pending_user_id) == numeric_user_id &&
+                                id(telegram_pending_chat_id) == numeric_chat_id;
+                            if (owner && !id(telegram_pending_action).empty()) {
+                              id(telegram_pending_action).clear();
+                              id(telegram_pending_code) = 0;
+                              reply = "✅ Operazione annullata.";
+                            } else {
+                              reply = "Nessuna operazione confermabile per questo utente e questa chat.";
+                            }
+                          } else if (command == "/help" || command == "/start") {
+                            reply = "🤖 COMANDI DISPONIBILI\n/stato - riepilogo generale\n/allarmi - ingressi e memorie\n/rete - IP e collegamenti\n/storico - collegamenti al registro\n/tacita - admin, richiede conferma\n/reset_memorie - admin, richiede conferma\n/annulla - annulla conferma\n/help - questo elenco";
+                          } else if (!command.empty() && command[0] == '/') {
+                            reply = "Comando non riconosciuto. Usa /help.";
+                          } else {
+                            return true;
+                          }
+
+                          id(telegram_command_name) = command;
+                          id(telegram_command_reply) = reply;
+                          id(telegram_command_reply_chat_id) = chat_id;
+                          id(telegram_command_reply_pending) = true;
+                          std::string audit = actor + " uid=" + user_id + " chat=" + chat_id + " cmd=" + command;
+                          id(telegram_command_status_value) = audit;
+                          id(event_log).log_event("TELEGRAM CMD", audit);
+                          return true;
+                        });
+                    - if:
+                        condition:
+                          lambda: return id(telegram_execute_silence);
+                        then:
+                          - rtttl.stop:
+                          - lambda: |-
+                              id(telegram_execute_silence) = false;
+                              id(event_log).log_event("COMANDO", "Buzzer tacitato da Telegram");
+                    - if:
+                        condition:
+                          lambda: return id(telegram_execute_memory_reset);
+                        then:
+                          - lambda: |-
+                              id(telegram_execute_memory_reset) = false;
+                              id(alarm_1_memory_value) = false;
+                              id(alarm_2_memory_value) = false;
+                              id(event_log).log_event("COMANDO", "Memorie cancellate da Telegram");
+                          - script.execute: update_status_led
+                    - if:
+                        condition:
+                          lambda: return id(telegram_command_reply_pending);
+                        then:
+                          - script.execute:
+                              id: telegram_command_reply_send
+                              destination_chat_id: !lambda return id(telegram_command_reply_chat_id);
+                              telegram_text: !lambda return id(telegram_command_reply);
+                  else:
+                    - lambda: |-
+                        id(telegram_command_status_value) =
+                            "Polling HTTP " + std::to_string(response->status_code);
+          on_error:
+            then:
+              - lambda: id(telegram_command_status_value) = "Errore polling Telegram";
+
+  - id: network_report
+    mode: restart
+    parameters:
+      event_name: string
+      intro: string
+      offline_seconds: int
+    then:
+      - lambda: |-
+          id(network_report_event) = event_name;
+          id(network_report_intro) = intro;
+          id(network_report_offline_seconds) = offline_seconds;
+          id(public_ip_value) = "non disponibile";
+          id(internet_available) = false;
+          id(internet_retry_count) = 0;
+          id(internet_status_value) = "Verifica connessione Internet";
+      - script.execute: network_report_probe
+
+  - id: network_report_probe
+    mode: restart
+    then:
+      - lambda: id(internet_probe_success) = false;
+      - http_request.get:
+          url: "https://api.ipify.org"
+          capture_response: true
+          max_response_buffer_size: 64
+          on_response:
+            then:
+              - lambda: |-
+                  std::string value = body;
+                  while (!value.empty() &&
+                         (value.back() == ' ' || value.back() == '\n' ||
+                          value.back() == '\r' || value.back() == '\t')) {
+                    value.pop_back();
+                  }
+                  size_t first = 0;
+                  while (first < value.size() &&
+                         (value[first] == ' ' || value[first] == '\n' ||
+                          value[first] == '\r' || value[first] == '\t')) {
+                    first++;
+                  }
+                  if (first > 0) value.erase(0, first);
+                  if (response->status_code == 200 && !value.empty() && value.size() < 64) {
+                    id(public_ip_value) = value;
+                    id(internet_probe_success) = true;
+                    id(internet_available) = true;
+                    id(internet_retry_count) = 0;
+                    id(internet_status_value) = "Internet disponibile - IP " + value;
+                  }
+              - if:
+                  condition:
+                    lambda: return id(internet_probe_success);
+                  then:
+                    - lambda: id(event_log).log_event("RETE", "Internet disponibile");
+                    - script.execute: network_report_send
+                  else:
+                    - script.execute: network_report_retry
+          on_error:
+            then:
+              - script.execute: network_report_retry
+
+  - id: network_report_retry
+    mode: restart
+    then:
+      - lambda: |-
+          id(internet_available) = false;
+          id(internet_retry_count) += 1;
+          id(internet_status_value) =
+              "Internet non disponibile - tentativo " +
+              std::to_string(id(internet_retry_count)) + " - nuovo tentativo tra 30 s";
+          if (id(internet_retry_count) == 1 || id(internet_retry_count) % 10 == 0) {
+            id(event_log).log_event(
+                "RETE",
+                "Internet non disponibile, tentativo " +
+                std::to_string(id(internet_retry_count)));
+          }
+      - delay: 30s
+      - script.execute: network_report_probe
+
+  - id: network_report_send
+    mode: restart
+    then:
+      - lambda: |-
+          auto format_duration = [](int seconds) -> std::string {
+            if (seconds < 0) return "non disponibile";
+            if (seconds < 60) return "meno di 1 minuto";
+            int days = seconds / 86400;
+            int hours = (seconds % 86400) / 3600;
+            int minutes = (seconds % 3600) / 60;
+            int secs = seconds % 60;
+            char value[96];
+            if (days > 0) {
+              snprintf(value, sizeof(value), "%d g %d h %d min %d s", days, hours, minutes, secs);
+            } else if (hours > 0) {
+              snprintf(value, sizeof(value), "%d h %d min %d s", hours, minutes, secs);
+            } else {
+              snprintf(value, sizeof(value), "%d min %d s", minutes, secs);
+            }
+            return value;
+          };
+          std::string local_ip = id(ethernet_ip).state;
+          if (local_ip.empty()) local_ip = "non disponibile";
+          std::string offline = format_duration(id(network_report_offline_seconds));
+          id(network_report_message) =
+              id(network_report_intro) +
+              "\nIP locale: " + local_ip +
+              "\nIP pubblico: " + id(public_ip_value) +
+              "\nTempo offline: " + offline;
+          id(event_log).log_event(
+              "RETE",
+              id(network_report_event) + " - IP locale " + local_ip +
+              ", IP pubblico " + id(public_ip_value) +
+              ", offline " + offline);
+      - script.execute:
+          id: remote_ha_send
+          event_name: !lambda return id(network_report_event);
+          event_message: !lambda return id(network_report_message);
+      - if:
+          condition:
+            switch.is_on: telegram_enabled
+          then:
+            - script.execute:
+                id: telegram_send
+                event_name: !lambda return id(network_report_event);
+                telegram_text: !lambda return id(network_report_message);
+      - if:
+          condition:
+            switch.is_on: brevo_enabled
+          then:
+            - script.execute:
+                id: brevo_send
+                subject: !lambda return std::string("Alarm Contact Collector - ") + id(network_report_event);
+                message: !lambda return id(network_report_message);
+                event_name: !lambda return id(network_report_event);
+
   - id: alarm_1_activated
     mode: restart
     then:
@@ -740,6 +1549,10 @@ script:
             now.is_valid() ? now.strftime("%d/%m/%Y %H:%M:%S") : "Ora non disponibile";
       - component.update: alarm_1_count
       - lambda: id(event_log).log_event("ALLARME", "${central_1_name} attivata");
+      - script.execute:
+          id: remote_ha_send
+          event_name: "alarm_1_activated"
+          event_message: "Allarme attivo su ${central_1_name}"
       - script.execute: update_status_led
       - if:
           condition:
@@ -775,6 +1588,10 @@ script:
             now.is_valid() ? now.strftime("%d/%m/%Y %H:%M:%S") : "Ora non disponibile";
       - component.update: alarm_2_count
       - lambda: id(event_log).log_event("ALLARME", "${central_2_name} attivata");
+      - script.execute:
+          id: remote_ha_send
+          event_name: "alarm_2_activated"
+          event_message: "Allarme attivo su ${central_2_name}"
       - script.execute: update_status_led
       - if:
           condition:
@@ -808,6 +1625,10 @@ script:
           }
           id(alarm_1_started) = 0;
       - lambda: id(event_log).log_event("RIPRISTINO", "${central_1_name} ripristinata");
+      - script.execute:
+          id: remote_ha_send
+          event_name: "alarm_1_restored"
+          event_message: "Allarme ripristinato su ${central_1_name}"
       - script.execute: update_status_led
       - if:
           condition:
@@ -836,6 +1657,10 @@ script:
           }
           id(alarm_2_started) = 0;
       - lambda: id(event_log).log_event("RIPRISTINO", "${central_2_name} ripristinata");
+      - script.execute:
+          id: remote_ha_send
+          event_name: "alarm_2_restored"
+          event_message: "Allarme ripristinato su ${central_2_name}"
       - script.execute: update_status_led
       - if:
           condition:
@@ -918,12 +1743,52 @@ script:
                                   blue: 0%
                                   effect: none
 
+  - id: telegram_command_reply_send
+    mode: queued
+    max_runs: 10
+    parameters:
+      destination_chat_id: string
+      telegram_text: string
+    then:
+      - http_request.post:
+          url: !secret telegram_send_url
+          capture_response: true
+          max_response_buffer_size: 512
+          request_headers:
+            accept: "application/json"
+            Content-Type: "application/json"
+          json:
+            chat_id: !lambda return destination_chat_id;
+            text: !lambda return telegram_text;
+          on_response:
+            then:
+              - lambda: |-
+                  id(telegram_command_status_value) +=
+                      " reply=" + std::to_string(response->status_code);
+          on_error:
+            then:
+              - lambda: id(telegram_command_status_value) += " reply=errore";
+
   - id: telegram_send
     mode: queued
-    max_runs: 8
+    max_runs: 20
     parameters:
       event_name: string
       telegram_text: string
+    then:
+      - script.execute:
+          id: telegram_delivery
+          event_name: !lambda return event_name;
+          telegram_text: !lambda return telegram_text;
+          retry_count: 0
+
+  - id: telegram_delivery
+    mode: queued
+    max_runs: 20
+    parameters: &telegram_delivery_parameters
+      event_name: string
+      telegram_text: string
+      retry_count: int
     then:
       - http_request.post:
           url: !secret telegram_send_url
@@ -937,21 +1802,68 @@ script:
             text: !lambda return telegram_text;
           on_response:
             then:
-              - lambda: |-
-                  std::string detail = body;
-                  if (detail.length() > 180) detail.resize(180);
-                  char status[256];
-                  snprintf(status, sizeof(status), "%s: HTTP %d - %s",
-                           event_name.c_str(), response->status_code, detail.c_str());
-                  id(telegram_status).publish_state(status);
-                  ESP_LOGI("telegram", "%s", status);
-                  id(event_log).log_event("TELEGRAM", status);
+              - if:
+                  condition:
+                    lambda: return response->status_code >= 200 && response->status_code < 300;
+                  then:
+                    - lambda: |-
+                        std::string status = event_name + ": consegnato HTTP " +
+                            std::to_string(response->status_code) + " al tentativo " +
+                            std::to_string(retry_count + 1);
+                        id(telegram_status).publish_state(status);
+                        id(event_log).log_event("TELEGRAM", status);
+                  else:
+                    - if:
+                        condition:
+                          lambda: |-
+                            int code = response->status_code;
+                            return retry_count < 48 &&
+                                   (code == 408 || code == 425 || code == 429 || code >= 500);
+                        then:
+                          - script.execute:
+                              id: telegram_retry
+                              event_name: !lambda return event_name;
+                              telegram_text: !lambda return telegram_text;
+                              retry_count: !lambda return retry_count + 1;
+                        else:
+                          - lambda: |-
+                              std::string status = event_name + ": errore permanente HTTP " +
+                                  std::to_string(response->status_code);
+                              id(telegram_status).publish_state(status);
+                              id(event_log).log_event("TELEGRAM", status);
           on_error:
             then:
-              - lambda: |-
-                  std::string status = std::string("Errore connessione - ") + event_name;
-                  id(telegram_status).publish_state(status);
-                  id(event_log).log_event("TELEGRAM", status);
+              - if:
+                  condition:
+                    lambda: return retry_count < 48;
+                  then:
+                    - script.execute:
+                        id: telegram_retry
+                        event_name: !lambda return event_name;
+                        telegram_text: !lambda return telegram_text;
+                        retry_count: !lambda return retry_count + 1;
+                  else:
+                    - lambda: |-
+                        std::string status = event_name + ": abbandonato dopo 49 tentativi";
+                        id(telegram_status).publish_state(status);
+                        id(event_log).log_event("TELEGRAM", status);
+
+  - id: telegram_retry
+    mode: parallel
+    max_runs: 20
+    parameters: *telegram_delivery_parameters
+    then:
+      - lambda: |-
+          id(telegram_status).publish_state(
+              event_name + ": in coda, tentativo " + std::to_string(retry_count + 1));
+      - delay: !lambda |-
+          int seconds = retry_count <= 1 ? 30 : retry_count == 2 ? 60 : retry_count == 3 ? 120 : 300;
+          return seconds * 1000;
+      - script.execute:
+          id: telegram_delivery
+          event_name: !lambda return event_name;
+          telegram_text: !lambda return telegram_text;
+          retry_count: !lambda return retry_count;
   - id: telegram_test
     mode: restart
     then:
@@ -962,11 +1874,27 @@ script:
 
   - id: brevo_send
     mode: queued
-    max_runs: 5
+    max_runs: 20
     parameters:
       subject: string
       message: string
       event_name: string
+    then:
+      - script.execute:
+          id: brevo_delivery
+          subject: !lambda return subject;
+          message: !lambda return message;
+          event_name: !lambda return event_name;
+          retry_count: 0
+
+  - id: brevo_delivery
+    mode: queued
+    max_runs: 20
+    parameters: &brevo_delivery_parameters
+      subject: string
+      message: string
+      event_name: string
+      retry_count: int
     then:
       - http_request.post:
           url: "https://api.brevo.com/v3/smtp/email"
@@ -983,15 +1911,68 @@ script:
             root["textContent"] = message;
           on_response:
             then:
-              - lambda: |-
-                  char result[96];
-                  snprintf(result, sizeof(result), "%s: HTTP %d",
-                           event_name.c_str(), response->status_code);
-                  id(brevo_status).publish_state(result);
-                  id(event_log).log_event("EMAIL", result);
+              - if:
+                  condition:
+                    lambda: return response->status_code >= 200 && response->status_code < 300;
+                  then:
+                    - lambda: |-
+                        std::string result = event_name + ": consegnato HTTP " +
+                            std::to_string(response->status_code) + " al tentativo " +
+                            std::to_string(retry_count + 1);
+                        id(brevo_status).publish_state(result);
+                        id(event_log).log_event("EMAIL", result);
+                  else:
+                    - if:
+                        condition:
+                          lambda: |-
+                            int code = response->status_code;
+                            return retry_count < 48 &&
+                                   (code == 408 || code == 425 || code == 429 || code >= 500);
+                        then:
+                          - script.execute:
+                              id: brevo_retry
+                              subject: !lambda return subject;
+                              message: !lambda return message;
+                              event_name: !lambda return event_name;
+                              retry_count: !lambda return retry_count + 1;
+                        else:
+                          - lambda: |-
+                              std::string result = event_name + ": errore permanente HTTP " +
+                                  std::to_string(response->status_code);
+                              id(brevo_status).publish_state(result);
+                              id(event_log).log_event("EMAIL", result);
           on_error:
             then:
-              - lambda: |-
-                  std::string result = std::string("Errore invio - ") + event_name;
-                  id(brevo_status).publish_state(result);
-                  id(event_log).log_event("EMAIL", result);
+              - if:
+                  condition:
+                    lambda: return retry_count < 48;
+                  then:
+                    - script.execute:
+                        id: brevo_retry
+                        subject: !lambda return subject;
+                        message: !lambda return message;
+                        event_name: !lambda return event_name;
+                        retry_count: !lambda return retry_count + 1;
+                  else:
+                    - lambda: |-
+                        std::string result = event_name + ": abbandonato dopo 49 tentativi";
+                        id(brevo_status).publish_state(result);
+                        id(event_log).log_event("EMAIL", result);
+
+  - id: brevo_retry
+    mode: parallel
+    max_runs: 20
+    parameters: *brevo_delivery_parameters
+    then:
+      - lambda: |-
+          id(brevo_status).publish_state(
+              event_name + ": in coda, tentativo " + std::to_string(retry_count + 1));
+      - delay: !lambda |-
+          int seconds = retry_count <= 1 ? 30 : retry_count == 2 ? 60 : retry_count == 3 ? 120 : 300;
+          return seconds * 1000;
+      - script.execute:
+          id: brevo_delivery
+          subject: !lambda return subject;
+          message: !lambda return message;
+          event_name: !lambda return event_name;
+          retry_count: !lambda return retry_count;
