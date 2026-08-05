@@ -15,8 +15,9 @@ compilazione e test reali sulla Waveshare ESP32-S3-POE-ETH-8DI-8RO.
 - comandi Telegram in sola lettura (`/stato`, `/allarmi`, `/rete`, `/storico`,
   `/help`) da chat privata o gruppo autorizzato, offset anti-duplicazione e audit
   persistente con ID chat, ID utente e username;
-- comandi amministrativi `/tacita` e `/reset_memorie`, limitati all'utente admin
-  e protetti da codice monouso valido 60 secondi e legato a utente e chat;
+- comandi amministrativi `/tacita` e `/reset_memorie`, limitati agli ID presenti
+  nella lista admin e protetti da codice monouso valido 60 secondi e legato al
+  singolo utente e alla chat;
 - invio autonomo degli eventi a due istanze Home Assistant tramite webhook HTTPS,
   con destinazioni disabilitate di default, token payload separati e diagnostica;
 - attesa della reale disponibilità Internet dopo un blackout, con conservazione
@@ -38,7 +39,7 @@ compilazione e test reali sulla Waveshare ESP32-S3-POE-ETH-8DI-8RO.
 - nessun token, URL privato o chiave nel repository;
 - nessun comando ai relè finché non viene progettata una conferma esplicita;
 - Telegram accetta comandi solo dalla chat privata o dal gruppo autorizzati e
-  limita i comandi operativi all'ID utente amministratore;
+  limita i comandi operativi agli ID utente presenti nella lista amministratori;
 - tacitazione e cancellazione memorie richiedono un codice monouso di conferma;
 - le comunicazioni verso Home Assistant usano HTTPS e secret separati;
 - ogni funzione sperimentale deve poter essere disabilitata localmente;

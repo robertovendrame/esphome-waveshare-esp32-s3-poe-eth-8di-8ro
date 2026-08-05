@@ -1,7 +1,7 @@
 substitutions:
   device_name: alarm-contact-collector
   friendly_name: "Alarm Contact Collector"
-  firmware_version: "1.0.0-rc1"
+  firmware_version: "1.0.0-rc2"
   central_1_name: "Centrale 1"
   central_2_name: "Centrale 2"
   brevo_sender_email: !secret brevo_sender_email
@@ -11,7 +11,7 @@ substitutions:
   telegram_updates_url: !secret telegram_updates_url
   telegram_authorized_chat_id: !secret telegram_chat_id
   telegram_authorized_group_id: !secret telegram_authorized_group_id
-  telegram_admin_user_id: !secret telegram_admin_user_id
+  telegram_admin_user_ids: !secret telegram_admin_user_ids
   ha_remote_1_webhook_token: !secret ha_remote_1_webhook_token
   ha_remote_2_webhook_token: !secret ha_remote_2_webhook_token
 
@@ -1248,7 +1248,27 @@ script:
                             if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
                           }
 
-                          bool is_admin = user_id == "${telegram_admin_user_id}";
+                          std::string admin_ids = "${telegram_admin_user_ids}";
+                          bool is_admin = false;
+                          size_t admin_start = 0;
+                          while (admin_start <= admin_ids.size()) {
+                            size_t admin_end = admin_ids.find(',', admin_start);
+                            std::string admin_id = admin_ids.substr(
+                                admin_start,
+                                admin_end == std::string::npos ? std::string::npos
+                                                               : admin_end - admin_start);
+                            size_t first = admin_id.find_first_not_of(" \t\r\n");
+                            size_t last = admin_id.find_last_not_of(" \t\r\n");
+                            if (first != std::string::npos) {
+                              admin_id = admin_id.substr(first, last - first + 1);
+                              if (admin_id == user_id) {
+                                is_admin = true;
+                                break;
+                              }
+                            }
+                            if (admin_end == std::string::npos) break;
+                            admin_start = admin_end + 1;
+                          }
                           std::string reply;
                           if (command == "/stato") {
                             uint32_t uptime = millis() / 1000;
