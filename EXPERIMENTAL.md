@@ -20,6 +20,8 @@ compilazione e test reali sulla Waveshare ESP32-S3-POE-ETH-8DI-8RO.
   del report di riavvio in RAM e ritentativo automatico ogni 30 secondi;
 - heartbeat ogni 5 minuti verso i Home Assistant remoti con stato completo,
   temperatura, uptime, rete, NTP e versione firmware;
+- code di consegna indipendenti per Telegram, Brevo e i due Home Assistant,
+  con conferma HTTP, classificazione degli errori e backoff progressivo;
 - comunicazione autonoma verso più istanze Home Assistant;
 - gestione di endpoint, autenticazione, ritentativi e coda offline;
 - comandi Telegram con elenco mittenti autorizzati;

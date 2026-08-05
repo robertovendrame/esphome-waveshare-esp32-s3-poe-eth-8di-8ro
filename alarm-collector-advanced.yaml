@@ -1,7 +1,7 @@
 substitutions:
   device_name: alarm-contact-collector
   friendly_name: "Alarm Contact Collector"
-  firmware_version: "0.8.3"
+  firmware_version: "0.9.0"
   central_1_name: "Centrale 1"
   central_2_name: "Centrale 2"
   brevo_sender_email: !secret brevo_sender_email
@@ -941,75 +941,198 @@ interval:
 script:
   - id: remote_ha_send
     mode: queued
-    max_runs: 8
+    max_runs: 20
     parameters:
       event_name: string
       event_message: string
     then:
-      - lambda: |-
-          id(remote_ha_event) = event_name;
-          id(remote_ha_message) = event_message;
       - if:
           condition:
             switch.is_on: remote_ha_1_enabled
           then:
-            - http_request.post:
-                url: !secret ha_remote_1_webhook_url
-                capture_response: true
-                max_response_buffer_size: 256
-                request_headers:
-                  Content-Type: "application/json"
-                json: &remote_ha_payload |-
-                  auto now = id(board_rtc).now();
-                  root["device"] = "${device_name}";
-                  root["event"] = id(remote_ha_event);
-                  root["message"] = id(remote_ha_message);
-                  root["timestamp"] = now.is_valid() ? now.strftime("%Y-%m-%dT%H:%M:%S%z") : "";
-                  root["alarm_1"] = id(alarm_1).state;
-                  root["alarm_2"] = id(alarm_2).state;
-                  root["memory_1"] = id(alarm_1_memory_value);
-                  root["memory_2"] = id(alarm_2_memory_value);
-                  root["local_ip"] = id(ethernet_ip).state;
-                  root["public_ip"] = id(public_ip_value);
-                  root["internet_available"] = id(internet_available);
-                  root["home_assistant_connected"] = id(native_api).is_connected();
-                  root["uptime_seconds"] = millis() / 1000;
-                  root["temperature_c"] = id(esp_temperature).state;
-                  root["last_ntp_sync"] = id(last_ntp_sync_value);
-                  root["firmware_version"] = "${firmware_version}";
-                on_response:
-                  then:
-                    - lambda: |-
-                        id(remote_ha_1_status_value) =
-                            id(remote_ha_event) + ": HTTP " + std::to_string(response->status_code);
-                        id(event_log).log_event("HA REMOTO 1", id(remote_ha_1_status_value));
-                on_error:
-                  then:
-                    - lambda: |-
-                        id(remote_ha_1_status_value) = "Errore invio - " + id(remote_ha_event);
-                        id(event_log).log_event("HA REMOTO 1", id(remote_ha_1_status_value));
+            - script.execute:
+                id: remote_ha_1_delivery
+                event_name: !lambda return event_name;
+                event_message: !lambda return event_message;
+                retry_count: 0
       - if:
           condition:
             switch.is_on: remote_ha_2_enabled
           then:
-            - http_request.post:
-                url: !secret ha_remote_2_webhook_url
-                capture_response: true
-                max_response_buffer_size: 256
-                request_headers:
-                  Content-Type: "application/json"
-                json: *remote_ha_payload
-                on_response:
+            - script.execute:
+                id: remote_ha_2_delivery
+                event_name: !lambda return event_name;
+                event_message: !lambda return event_message;
+                retry_count: 0
+
+  - id: remote_ha_1_delivery
+    mode: queued
+    max_runs: 20
+    parameters: &remote_delivery_parameters
+      event_name: string
+      event_message: string
+      retry_count: int
+    then:
+      - http_request.post:
+          url: !secret ha_remote_1_webhook_url
+          capture_response: true
+          max_response_buffer_size: 256
+          request_headers:
+            Content-Type: "application/json"
+          json: &remote_ha_payload |-
+            auto now = id(board_rtc).now();
+            root["device"] = "${device_name}";
+            root["event"] = event_name;
+            root["message"] = event_message;
+            root["timestamp"] = now.is_valid() ? now.strftime("%Y-%m-%dT%H:%M:%S%z") : "";
+            root["alarm_1"] = id(alarm_1).state;
+            root["alarm_2"] = id(alarm_2).state;
+            root["memory_1"] = id(alarm_1_memory_value);
+            root["memory_2"] = id(alarm_2_memory_value);
+            root["local_ip"] = id(ethernet_ip).state;
+            root["public_ip"] = id(public_ip_value);
+            root["internet_available"] = id(internet_available);
+            root["home_assistant_connected"] = id(native_api).is_connected();
+            root["uptime_seconds"] = millis() / 1000;
+            root["temperature_c"] = id(esp_temperature).state;
+            root["last_ntp_sync"] = id(last_ntp_sync_value);
+            root["firmware_version"] = "${firmware_version}";
+            root["delivery_attempt"] = retry_count + 1;
+          on_response:
+            then:
+              - if:
+                  condition:
+                    lambda: return response->status_code >= 200 && response->status_code < 300;
                   then:
                     - lambda: |-
-                        id(remote_ha_2_status_value) =
-                            id(remote_ha_event) + ": HTTP " + std::to_string(response->status_code);
-                        id(event_log).log_event("HA REMOTO 2", id(remote_ha_2_status_value));
-                on_error:
+                        id(remote_ha_1_status_value) = event_name + ": consegnato HTTP " +
+                            std::to_string(response->status_code) + " al tentativo " +
+                            std::to_string(retry_count + 1);
+                        id(event_log).log_event("HA REMOTO 1", id(remote_ha_1_status_value));
+                  else:
+                    - if:
+                        condition:
+                          lambda: |-
+                            int code = response->status_code;
+                            return retry_count < 48 &&
+                                   (code == 408 || code == 425 || code == 429 || code >= 500);
+                        then:
+                          - script.execute:
+                              id: remote_ha_1_retry
+                              event_name: !lambda return event_name;
+                              event_message: !lambda return event_message;
+                              retry_count: !lambda return retry_count + 1;
+                        else:
+                          - lambda: |-
+                              id(remote_ha_1_status_value) = event_name + ": errore permanente HTTP " +
+                                  std::to_string(response->status_code);
+                              id(event_log).log_event("HA REMOTO 1", id(remote_ha_1_status_value));
+          on_error:
+            then:
+              - if:
+                  condition:
+                    lambda: return retry_count < 48;
+                  then:
+                    - script.execute:
+                        id: remote_ha_1_retry
+                        event_name: !lambda return event_name;
+                        event_message: !lambda return event_message;
+                        retry_count: !lambda return retry_count + 1;
+                  else:
+                    - lambda: |-
+                        id(remote_ha_1_status_value) = event_name + ": abbandonato dopo 49 tentativi";
+                        id(event_log).log_event("HA REMOTO 1", id(remote_ha_1_status_value));
+
+  - id: remote_ha_2_delivery
+    mode: queued
+    max_runs: 20
+    parameters: *remote_delivery_parameters
+    then:
+      - http_request.post:
+          url: !secret ha_remote_2_webhook_url
+          capture_response: true
+          max_response_buffer_size: 256
+          request_headers:
+            Content-Type: "application/json"
+          json: *remote_ha_payload
+          on_response:
+            then:
+              - if:
+                  condition:
+                    lambda: return response->status_code >= 200 && response->status_code < 300;
                   then:
                     - lambda: |-
-                        id(remote_ha_2_status_value) = "Errore invio - " + id(remote_ha_event);
+                        id(remote_ha_2_status_value) = event_name + ": consegnato HTTP " +
+                            std::to_string(response->status_code) + " al tentativo " +
+                            std::to_string(retry_count + 1);
                         id(event_log).log_event("HA REMOTO 2", id(remote_ha_2_status_value));
+                  else:
+                    - if:
+                        condition:
+                          lambda: |-
+                            int code = response->status_code;
+                            return retry_count < 48 &&
+                                   (code == 408 || code == 425 || code == 429 || code >= 500);
+                        then:
+                          - script.execute:
+                              id: remote_ha_2_retry
+                              event_name: !lambda return event_name;
+                              event_message: !lambda return event_message;
+                              retry_count: !lambda return retry_count + 1;
+                        else:
+                          - lambda: |-
+                              id(remote_ha_2_status_value) = event_name + ": errore permanente HTTP " +
+                                  std::to_string(response->status_code);
+                              id(event_log).log_event("HA REMOTO 2", id(remote_ha_2_status_value));
+          on_error:
+            then:
+              - if:
+                  condition:
+                    lambda: return retry_count < 48;
+                  then:
+                    - script.execute:
+                        id: remote_ha_2_retry
+                        event_name: !lambda return event_name;
+                        event_message: !lambda return event_message;
+                        retry_count: !lambda return retry_count + 1;
+                  else:
+                    - lambda: |-
+                        id(remote_ha_2_status_value) = event_name + ": abbandonato dopo 49 tentativi";
+                        id(event_log).log_event("HA REMOTO 2", id(remote_ha_2_status_value));
+
+  - id: remote_ha_1_retry
+    mode: parallel
+    max_runs: 20
+    parameters: *remote_delivery_parameters
+    then:
+      - lambda: |-
+          id(remote_ha_1_status_value) = event_name + ": in coda, tentativo " +
+              std::to_string(retry_count + 1);
+      - delay: !lambda |-
+          int seconds = retry_count <= 1 ? 30 : retry_count == 2 ? 60 : retry_count == 3 ? 120 : 300;
+          return seconds * 1000;
+      - script.execute:
+          id: remote_ha_1_delivery
+          event_name: !lambda return event_name;
+          event_message: !lambda return event_message;
+          retry_count: !lambda return retry_count;
+
+  - id: remote_ha_2_retry
+    mode: parallel
+    max_runs: 20
+    parameters: *remote_delivery_parameters
+    then:
+      - lambda: |-
+          id(remote_ha_2_status_value) = event_name + ": in coda, tentativo " +
+              std::to_string(retry_count + 1);
+      - delay: !lambda |-
+          int seconds = retry_count <= 1 ? 30 : retry_count == 2 ? 60 : retry_count == 3 ? 120 : 300;
+          return seconds * 1000;
+      - script.execute:
+          id: remote_ha_2_delivery
+          event_name: !lambda return event_name;
+          event_message: !lambda return event_message;
+          retry_count: !lambda return retry_count;
 
   - id: telegram_poll
     mode: single
@@ -1468,10 +1591,24 @@ script:
 
   - id: telegram_send
     mode: queued
-    max_runs: 8
+    max_runs: 20
     parameters:
       event_name: string
       telegram_text: string
+    then:
+      - script.execute:
+          id: telegram_delivery
+          event_name: !lambda return event_name;
+          telegram_text: !lambda return telegram_text;
+          retry_count: 0
+
+  - id: telegram_delivery
+    mode: queued
+    max_runs: 20
+    parameters: &telegram_delivery_parameters
+      event_name: string
+      telegram_text: string
+      retry_count: int
     then:
       - http_request.post:
           url: !secret telegram_send_url
@@ -1485,21 +1622,68 @@ script:
             text: !lambda return telegram_text;
           on_response:
             then:
-              - lambda: |-
-                  std::string detail = body;
-                  if (detail.length() > 180) detail.resize(180);
-                  char status[256];
-                  snprintf(status, sizeof(status), "%s: HTTP %d - %s",
-                           event_name.c_str(), response->status_code, detail.c_str());
-                  id(telegram_status).publish_state(status);
-                  ESP_LOGI("telegram", "%s", status);
-                  id(event_log).log_event("TELEGRAM", status);
+              - if:
+                  condition:
+                    lambda: return response->status_code >= 200 && response->status_code < 300;
+                  then:
+                    - lambda: |-
+                        std::string status = event_name + ": consegnato HTTP " +
+                            std::to_string(response->status_code) + " al tentativo " +
+                            std::to_string(retry_count + 1);
+                        id(telegram_status).publish_state(status);
+                        id(event_log).log_event("TELEGRAM", status);
+                  else:
+                    - if:
+                        condition:
+                          lambda: |-
+                            int code = response->status_code;
+                            return retry_count < 48 &&
+                                   (code == 408 || code == 425 || code == 429 || code >= 500);
+                        then:
+                          - script.execute:
+                              id: telegram_retry
+                              event_name: !lambda return event_name;
+                              telegram_text: !lambda return telegram_text;
+                              retry_count: !lambda return retry_count + 1;
+                        else:
+                          - lambda: |-
+                              std::string status = event_name + ": errore permanente HTTP " +
+                                  std::to_string(response->status_code);
+                              id(telegram_status).publish_state(status);
+                              id(event_log).log_event("TELEGRAM", status);
           on_error:
             then:
-              - lambda: |-
-                  std::string status = std::string("Errore connessione - ") + event_name;
-                  id(telegram_status).publish_state(status);
-                  id(event_log).log_event("TELEGRAM", status);
+              - if:
+                  condition:
+                    lambda: return retry_count < 48;
+                  then:
+                    - script.execute:
+                        id: telegram_retry
+                        event_name: !lambda return event_name;
+                        telegram_text: !lambda return telegram_text;
+                        retry_count: !lambda return retry_count + 1;
+                  else:
+                    - lambda: |-
+                        std::string status = event_name + ": abbandonato dopo 49 tentativi";
+                        id(telegram_status).publish_state(status);
+                        id(event_log).log_event("TELEGRAM", status);
+
+  - id: telegram_retry
+    mode: parallel
+    max_runs: 20
+    parameters: *telegram_delivery_parameters
+    then:
+      - lambda: |-
+          id(telegram_status).publish_state(
+              event_name + ": in coda, tentativo " + std::to_string(retry_count + 1));
+      - delay: !lambda |-
+          int seconds = retry_count <= 1 ? 30 : retry_count == 2 ? 60 : retry_count == 3 ? 120 : 300;
+          return seconds * 1000;
+      - script.execute:
+          id: telegram_delivery
+          event_name: !lambda return event_name;
+          telegram_text: !lambda return telegram_text;
+          retry_count: !lambda return retry_count;
   - id: telegram_test
     mode: restart
     then:
@@ -1510,11 +1694,27 @@ script:
 
   - id: brevo_send
     mode: queued
-    max_runs: 5
+    max_runs: 20
     parameters:
       subject: string
       message: string
       event_name: string
+    then:
+      - script.execute:
+          id: brevo_delivery
+          subject: !lambda return subject;
+          message: !lambda return message;
+          event_name: !lambda return event_name;
+          retry_count: 0
+
+  - id: brevo_delivery
+    mode: queued
+    max_runs: 20
+    parameters: &brevo_delivery_parameters
+      subject: string
+      message: string
+      event_name: string
+      retry_count: int
     then:
       - http_request.post:
           url: "https://api.brevo.com/v3/smtp/email"
@@ -1531,15 +1731,68 @@ script:
             root["textContent"] = message;
           on_response:
             then:
-              - lambda: |-
-                  char result[96];
-                  snprintf(result, sizeof(result), "%s: HTTP %d",
-                           event_name.c_str(), response->status_code);
-                  id(brevo_status).publish_state(result);
-                  id(event_log).log_event("EMAIL", result);
+              - if:
+                  condition:
+                    lambda: return response->status_code >= 200 && response->status_code < 300;
+                  then:
+                    - lambda: |-
+                        std::string result = event_name + ": consegnato HTTP " +
+                            std::to_string(response->status_code) + " al tentativo " +
+                            std::to_string(retry_count + 1);
+                        id(brevo_status).publish_state(result);
+                        id(event_log).log_event("EMAIL", result);
+                  else:
+                    - if:
+                        condition:
+                          lambda: |-
+                            int code = response->status_code;
+                            return retry_count < 48 &&
+                                   (code == 408 || code == 425 || code == 429 || code >= 500);
+                        then:
+                          - script.execute:
+                              id: brevo_retry
+                              subject: !lambda return subject;
+                              message: !lambda return message;
+                              event_name: !lambda return event_name;
+                              retry_count: !lambda return retry_count + 1;
+                        else:
+                          - lambda: |-
+                              std::string result = event_name + ": errore permanente HTTP " +
+                                  std::to_string(response->status_code);
+                              id(brevo_status).publish_state(result);
+                              id(event_log).log_event("EMAIL", result);
           on_error:
             then:
-              - lambda: |-
-                  std::string result = std::string("Errore invio - ") + event_name;
-                  id(brevo_status).publish_state(result);
-                  id(event_log).log_event("EMAIL", result);
+              - if:
+                  condition:
+                    lambda: return retry_count < 48;
+                  then:
+                    - script.execute:
+                        id: brevo_retry
+                        subject: !lambda return subject;
+                        message: !lambda return message;
+                        event_name: !lambda return event_name;
+                        retry_count: !lambda return retry_count + 1;
+                  else:
+                    - lambda: |-
+                        std::string result = event_name + ": abbandonato dopo 49 tentativi";
+                        id(brevo_status).publish_state(result);
+                        id(event_log).log_event("EMAIL", result);
+
+  - id: brevo_retry
+    mode: parallel
+    max_runs: 20
+    parameters: *brevo_delivery_parameters
+    then:
+      - lambda: |-
+          id(brevo_status).publish_state(
+              event_name + ": in coda, tentativo " + std::to_string(retry_count + 1));
+      - delay: !lambda |-
+          int seconds = retry_count <= 1 ? 30 : retry_count == 2 ? 60 : retry_count == 3 ? 120 : 300;
+          return seconds * 1000;
+      - script.execute:
+          id: brevo_delivery
+          subject: !lambda return subject;
+          message: !lambda return message;
+          event_name: !lambda return event_name;
+          retry_count: !lambda return retry_count;
