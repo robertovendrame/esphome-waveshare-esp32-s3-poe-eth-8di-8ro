@@ -73,3 +73,15 @@ Questo progetto non sostituisce una centrale antintrusione certificata e non ne
 replica certificazioni, supervisione o comunicazioni di sicurezza.
 
 Licenza MIT.
+
+
+## Aggiornamenti da GitHub con compilazione locale
+
+Il file `examples/alarm-collector-github.yaml` è una configurazione minima da
+copiare nel proprio ESPHome. Il firmware viene aggiornato dal branch GitHub
+selezionato ogni cinque minuti, ma API key, password, URL e token vengono
+sostituiti usando esclusivamente il `secrets.yaml` locale.
+
+L'installazione non è automatica: ESPHome scarica il sorgente aggiornato durante
+la validazione e lo compila localmente quando si preme `Install`. Questo evita
+di pubblicare firmware contenenti credenziali reali.
