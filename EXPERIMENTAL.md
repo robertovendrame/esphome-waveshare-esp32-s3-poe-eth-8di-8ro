@@ -43,6 +43,14 @@ compilazione e test reali sulla Waveshare ESP32-S3-POE-ETH-8DI-8RO.
 - notifica persistente sempre disponibile e servizio push configurabile;
 - interruttore generale per disabilitare gli avvisi Home Assistant.
 
+## Durata e criticità degli allarmi
+
+- durata numerica e formattata HH:MM:SS visibile nel firmware;
+- durata totale inclusa nelle notifiche di ripristino e nei webhook remoti;
+- promemoria Telegram ogni 5 minuti per la pompa e ogni 10 minuti per l'allarme tecnico;
+- promemoria Brevo ogni 30 minuti, disattivabili con un interruttore dedicato;
+- DI1 classificato come possibile emergenza: incendio, manutenzione o guasto.
+
 ## Regole di sicurezza
 
 - nessun token, URL privato o chiave nel repository;
