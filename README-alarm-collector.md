@@ -193,3 +193,40 @@ Per più destinatari è consigliato creare un gruppo di notifica Home Assistant
 chiamato, per esempio, `notify.alarm_collector` e usare quel servizio nel
 secret. Impostando `notify.persistent_notification` gli avvisi rimangono
 soltanto nell'interfaccia Home Assistant.
+
+
+## Configurazione ESPHome collegata a GitHub
+
+Per evitare di copiare manualmente il firmware a ogni aggiornamento:
+
+1. copiare `examples/alarm-collector-github.yaml` in `/config/esphome/`;
+2. rinominarlo, per esempio, `alarm-contact-collector.yaml`;
+3. mantenere tutte le credenziali nel `secrets.yaml` locale;
+4. aprire il dispositivo nel dashboard ESPHome e premere `Install`.
+
+Il file locale contiene soltanto substitutions con riferimenti `!secret`.
+Il package remoto viene recuperato da GitHub con `refresh: 5min`; ESPHome
+compila poi il firmware sul server locale e installa tramite il normale OTA.
+Il repository non riceve né conserva i secret reali.
+
+Sul branch di prova il riferimento è `experimental`. Quando la versione sarà
+promossa, il file stabile userà `ref: main`.
+
+ESPHome può aggiornare automaticamente la copia del sorgente, ma non installa
+silenziosamente il nuovo firmware. La conferma manuale da ESPHome rimane
+intenzionale e permette di leggere il risultato della compilazione prima
+dell'OTA.
+
+## Rilevamento affidabile dell'offline
+
+Ogni Home Assistant remoto salva l'ultimo heartbeat in
+`input_datetime.alarm_collector_ultimo_heartbeat`, che sopravvive ai riavvii.
+Il collegamento viene considerato assente dopo 15 minuti senza heartbeat.
+
+Nel package notifiche impostare:
+
+- `Alarm Collector - Ritardo extra notifica offline` a `0` sul primo HA;
+- lo stesso helper a `5` sul secondo HA di backup.
+
+Il primo avviso arriva quindi dopo circa 15 minuti e il secondo dopo circa
+20 minuti, riducendo le notifiche duplicate e mantenendo la ridondanza.
