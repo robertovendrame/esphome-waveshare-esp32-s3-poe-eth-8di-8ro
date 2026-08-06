@@ -1,0 +1,255 @@
+# Package opzionale: notifiche Home Assistant per la pompa antincendio.
+#
+# Richiede home-assistant/packages/alarm_contact_collector.yaml.
+# In secrets.yaml configurare alarm_collector_notify_service con un servizio
+# notify esistente, ad esempio "notify.mobile_app_telefono" oppure un gruppo
+# "notify.alarm_collector". Usare "notify.persistent_notification" per ricevere
+# esclusivamente notifiche nell'interfaccia Home Assistant.
+
+input_boolean:
+  alarm_collector_notifiche_ha:
+    name: Alarm Collector - Notifiche Home Assistant
+    icon: mdi:bell
+    initial: true
+
+script:
+  alarm_collector_invia_notifica:
+    alias: Alarm Collector - Invia notifica
+    description: Invia una notifica persistente e, se configurato, una notifica push
+    mode: queued
+    max: 20
+    fields:
+      titolo:
+        name: Titolo
+        required: true
+        selector:
+          text:
+      messaggio:
+        name: Messaggio
+        required: true
+        selector:
+          text:
+            multiline: true
+      notification_id:
+        name: Identificativo
+        required: true
+        selector:
+          text:
+    sequence:
+      - action: persistent_notification.create
+        data:
+          title: "{{ titolo }}"
+          message: "{{ messaggio }}"
+          notification_id: "{{ notification_id }}"
+      - variables:
+          notify_service: !secret alarm_collector_notify_service
+      - if:
+          - condition: template
+            value_template: >-
+              {{ notify_service not in ['', 'notify.persistent_notification'] }}
+        then:
+          - action: "{{ notify_service }}"
+            data:
+              title: "{{ titolo }}"
+              message: "{{ messaggio }}"
+
+automation:
+  - id: alarm_collector_notifica_pompa_antincendio
+    alias: Alarm Collector - Notifica pompa antincendio
+    description: Notifica avvio e arresto della pompa dell'anello antincendio
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.alarm_collector_allarme_1
+        from: "off"
+        to: "on"
+        id: avvio
+      - trigger: state
+        entity_id: input_boolean.alarm_collector_allarme_1
+        from: "on"
+        to: "off"
+        id: arresto
+    conditions:
+      - condition: state
+        entity_id: input_boolean.alarm_collector_notifiche_ha
+        state: "on"
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: avvio
+            sequence:
+              - action: script.alarm_collector_invia_notifica
+                data:
+                  titolo: "🔥 Pompa anello antincendio avviata"
+                  messaggio: >-
+                    Il contatto DI1 segnala l'avvio della pompa antincendio.
+                    Verificare la causa dell'avviamento e lo stato dell'impianto.
+                    Ricevuto da Home Assistant alle {{ now().strftime('%d/%m/%Y %H:%M:%S') }}.
+                  notification_id: alarm_collector_pompa_antincendio
+          - conditions:
+              - condition: trigger
+                id: arresto
+            sequence:
+              - variables:
+                  durata_secondi: >-
+                    {{ (as_timestamp(now()) -
+                        as_timestamp(trigger.from_state.last_changed)) | int(0) }}
+              - action: script.alarm_collector_invia_notifica
+                data:
+                  titolo: "✅ Pompa anello antincendio arrestata"
+                  messaggio: >-
+                    Il contatto DI1 è tornato nello stato normale.
+                    Durata indicativa dell'attivazione:
+                    {{ timedelta(seconds=durata_secondi | int) }}.
+                    Ricevuto alle {{ now().strftime('%d/%m/%Y %H:%M:%S') }}.
+                  notification_id: alarm_collector_pompa_antincendio
+    mode: queued
+    max: 10
+
+  - id: alarm_collector_notifica_allarme_tecnico
+    alias: Alarm Collector - Notifica allarme tecnico pompa
+    description: Notifica attivazione e ripristino dell'allarme generale della centralina
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.alarm_collector_allarme_2
+        from: "off"
+        to: "on"
+        id: allarme
+      - trigger: state
+        entity_id: input_boolean.alarm_collector_allarme_2
+        from: "on"
+        to: "off"
+        id: ripristino
+    conditions:
+      - condition: state
+        entity_id: input_boolean.alarm_collector_notifiche_ha
+        state: "on"
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: allarme
+            sequence:
+              - action: script.alarm_collector_invia_notifica
+                data:
+                  titolo: "🚨 Allarme centralina pompa antincendio"
+                  messaggio: >-
+                    Il contatto DI2 segnala un allarme generico della centralina:
+                    possibile mancanza rete, bassa pressione o altra anomalia.
+                    Consultare immediatamente la centralina per identificare la causa.
+                    Ricevuto alle {{ now().strftime('%d/%m/%Y %H:%M:%S') }}.
+                  notification_id: alarm_collector_allarme_tecnico
+          - conditions:
+              - condition: trigger
+                id: ripristino
+            sequence:
+              - variables:
+                  durata_secondi: >-
+                    {{ (as_timestamp(now()) -
+                        as_timestamp(trigger.from_state.last_changed)) | int(0) }}
+              - action: script.alarm_collector_invia_notifica
+                data:
+                  titolo: "✅ Allarme centralina pompa ripristinato"
+                  messaggio: >-
+                    Il contatto DI2 è tornato nello stato normale.
+                    Durata indicativa dell'anomalia:
+                    {{ timedelta(seconds=durata_secondi | int) }}.
+                    Verificare comunque lo storico della centralina.
+                  notification_id: alarm_collector_allarme_tecnico
+    mode: queued
+    max: 10
+
+  - id: alarm_collector_promemoria_pompa_antincendio
+    alias: Alarm Collector - Promemoria pompa attiva
+    description: Ripete ogni 30 minuti la notifica finché la pompa risulta attiva
+    triggers:
+      - trigger: time_pattern
+        minutes: "/30"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.alarm_collector_notifiche_ha
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.alarm_collector_allarme_1
+        state: "on"
+    actions:
+      - action: script.alarm_collector_invia_notifica
+        data:
+          titolo: "⚠️ Pompa antincendio ancora attiva"
+          messaggio: >-
+            La pompa dell'anello antincendio risulta ancora avviata.
+            Attiva da circa
+            {{ relative_time(states.input_boolean.alarm_collector_allarme_1.last_changed) }}.
+          notification_id: alarm_collector_pompa_antincendio
+    mode: single
+
+  - id: alarm_collector_promemoria_allarme_tecnico
+    alias: Alarm Collector - Promemoria allarme tecnico
+    description: Ripete ogni 10 minuti la notifica finché l'anomalia risulta attiva
+    triggers:
+      - trigger: time_pattern
+        minutes: "/10"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.alarm_collector_notifiche_ha
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.alarm_collector_allarme_2
+        state: "on"
+    actions:
+      - action: script.alarm_collector_invia_notifica
+        data:
+          titolo: "🚨 Allarme centralina ancora attivo"
+          messaggio: >-
+            L'allarme generico della centralina pompa antincendio è ancora presente.
+            Attivo da circa
+            {{ relative_time(states.input_boolean.alarm_collector_allarme_2.last_changed) }}.
+            Consultare la centralina per identificarne la causa.
+          notification_id: alarm_collector_allarme_tecnico
+    mode: single
+
+  - id: alarm_collector_notifica_collegamento
+    alias: Alarm Collector - Notifica collegamento
+    description: Notifica perdita prolungata e ripristino del concentratore
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.alarm_collector_collegamento_recente
+        from: "on"
+        to: "off"
+        for: "00:15:00"
+        id: offline
+      - trigger: state
+        entity_id: binary_sensor.alarm_collector_collegamento_recente
+        from: "off"
+        to: "on"
+        id: online
+    conditions:
+      - condition: state
+        entity_id: input_boolean.alarm_collector_notifiche_ha
+        state: "on"
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: offline
+            sequence:
+              - action: script.alarm_collector_invia_notifica
+                data:
+                  titolo: "⚠️ Concentratore allarmi non raggiungibile"
+                  messaggio: >-
+                    Home Assistant non riceve aggiornamenti recenti dal concentratore.
+                    Controllare alimentazione PoE, rete Ethernet e collegamento Internet.
+                  notification_id: alarm_collector_collegamento
+          - conditions:
+              - condition: trigger
+                id: online
+            sequence:
+              - action: script.alarm_collector_invia_notifica
+                data:
+                  titolo: "✅ Concentratore allarmi nuovamente collegato"
+                  messaggio: >-
+                    Home Assistant ha ripreso a ricevere aggiornamenti dal concentratore
+                    alle {{ now().strftime('%d/%m/%Y %H:%M:%S') }}.
+                  notification_id: alarm_collector_collegamento
+    mode: queued
+    max: 10
