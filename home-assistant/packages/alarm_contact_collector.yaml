@@ -2,6 +2,12 @@
 # I valori alarm_collector_webhook_id e alarm_collector_payload_token devono
 # essere diversi in ciascun secrets.yaml.
 
+input_datetime:
+  alarm_collector_ultimo_heartbeat:
+    name: Alarm Collector - Ultimo heartbeat ricevuto
+    has_date: true
+    has_time: true
+
 input_text:
   alarm_collector_ultimo_evento:
     name: Alarm Collector - Ultimo evento
@@ -56,9 +62,9 @@ template:
         unique_id: alarm_collector_collegamento_recente
         device_class: connectivity
         state: >-
-          {{ states('input_text.alarm_collector_ultimo_aggiornamento') not in
-             ['unknown', 'unavailable', 'Mai', ''] and
-             (now() - states.input_text.alarm_collector_ultimo_aggiornamento.last_changed).total_seconds() < 900 }}
+          {% set seen = states('input_datetime.alarm_collector_ultimo_heartbeat') %}
+          {{ seen not in ['unknown', 'unavailable', ''] and
+             (as_timestamp(now()) - as_timestamp(seen)) < 900 }}
   - sensor:
       - name: Alarm Collector - Stato generale
         unique_id: alarm_collector_stato_generale
@@ -94,6 +100,11 @@ automation:
              trigger.json.auth_token | default('') ==
                expected_payload_token }}
     actions:
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.alarm_collector_ultimo_heartbeat
+        data:
+          timestamp: "{{ as_timestamp(now()) }}"
       - action: input_text.set_value
         target:
           entity_id: input_text.alarm_collector_ultimo_evento
