@@ -6,11 +6,33 @@
 # "notify.alarm_collector". Usare "notify.persistent_notification" per ricevere
 # esclusivamente notifiche nell'interfaccia Home Assistant.
 
+input_number:
+  alarm_collector_ritardo_extra_offline:
+    name: Alarm Collector - Ritardo extra notifica offline
+    icon: mdi:timer-plus-outline
+    min: 0
+    max: 60
+    step: 1
+    unit_of_measurement: min
+    mode: box
+
 input_boolean:
   alarm_collector_notifiche_ha:
     name: Alarm Collector - Notifiche Home Assistant
     icon: mdi:bell
     initial: true
+
+template:
+  - binary_sensor:
+      - name: Alarm Collector - Collegamento per notifiche
+        unique_id: alarm_collector_collegamento_notifiche
+        device_class: connectivity
+        state: >-
+          {% set seen = states('input_datetime.alarm_collector_ultimo_heartbeat') %}
+          {% set extra = states('input_number.alarm_collector_ritardo_extra_offline') | int(0) %}
+          {{ seen not in ['unknown', 'unavailable', ''] and
+             (as_timestamp(now()) - as_timestamp(seen)) < (900 + extra * 60) }}
+
 
 script:
   alarm_collector_invia_notifica:
@@ -216,12 +238,12 @@ automation:
     description: Notifica perdita prolungata e ripristino del concentratore
     triggers:
       - trigger: state
-        entity_id: binary_sensor.alarm_collector_collegamento_recente
+        entity_id: binary_sensor.alarm_collector_collegamento_per_notifiche
         from: "on"
         to: "off"
         id: offline
       - trigger: state
-        entity_id: binary_sensor.alarm_collector_collegamento_recente
+        entity_id: binary_sensor.alarm_collector_collegamento_per_notifiche
         from: "off"
         to: "on"
         id: online
@@ -239,8 +261,11 @@ automation:
                 data:
                   titolo: "⚠️ Concentratore allarmi non raggiungibile"
                   messaggio: >-
-                    Home Assistant non riceve aggiornamenti recenti dal concentratore.
-                    Controllare alimentazione PoE, rete Ethernet e collegamento Internet.
+                    Home Assistant non riceve heartbeat dal concentratore da almeno
+                    {{ 15 + states('input_number.alarm_collector_ritardo_extra_offline') | int(0) }} minuti.
+                    Possibili cause: scatto del contatore generale, perdita PoE,
+                    guasto di rete o dispositivo spento. Verificare l'alimentazione
+                    e riarmare manualmente il contatore se necessario.
                   notification_id: alarm_collector_collegamento
           - conditions:
               - condition: trigger
@@ -250,8 +275,9 @@ automation:
                 data:
                   titolo: "✅ Concentratore allarmi nuovamente collegato"
                   messaggio: >-
-                    Home Assistant ha ripreso a ricevere aggiornamenti dal concentratore
+                    Home Assistant ha ripreso a ricevere heartbeat dal concentratore
                     alle {{ now().strftime('%d/%m/%Y %H:%M:%S') }}.
+                    Il dispositivo e la connettività risultano nuovamente disponibili.
                   notification_id: alarm_collector_collegamento
     mode: queued
     max: 10
