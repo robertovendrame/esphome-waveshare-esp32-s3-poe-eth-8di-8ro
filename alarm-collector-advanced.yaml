@@ -79,7 +79,7 @@ external_components:
       type: git
       url: https://github.com/robertovendrame/waveshare-alarm-collector
       ref: "${github_ref}"
-      refresh: 5min
+    refresh: 5min
     components: [event_history]
 
 esp32:
