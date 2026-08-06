@@ -216,7 +216,6 @@ automation:
         entity_id: binary_sensor.alarm_collector_collegamento_recente
         from: "on"
         to: "off"
-        for: "00:15:00"
         id: offline
       - trigger: state
         entity_id: binary_sensor.alarm_collector_collegamento_recente
