@@ -2,8 +2,8 @@ substitutions:
   device_name: alarm-contact-collector
   friendly_name: "Alarm Contact Collector"
   firmware_version: "1.0.0-rc2"
-  central_1_name: "Centrale 1"
-  central_2_name: "Centrale 2"
+  central_1_name: "Pompa anello antincendio"
+  central_2_name: "Allarme centralina pompa antincendio"
   brevo_sender_email: !secret brevo_sender_email
   brevo_sender_name: !secret brevo_sender_name
   brevo_recipient_email: !secret brevo_recipient_email
