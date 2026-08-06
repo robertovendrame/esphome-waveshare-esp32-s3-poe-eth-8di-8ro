@@ -50,7 +50,7 @@ views:
             icon: mdi:alarm-light-outline
           - type: tile
             entity: input_boolean.alarm_collector_allarme_1
-            name: Centrale 1
+            name: Pompa anello antincendio
             color: red
             tap_action:
               action: none
@@ -58,7 +58,7 @@ views:
               action: more-info
           - type: tile
             entity: input_boolean.alarm_collector_allarme_2
-            name: Centrale 2
+            name: Allarme centralina pompa
             color: red
             tap_action:
               action: none
@@ -66,7 +66,7 @@ views:
               action: more-info
           - type: tile
             entity: input_boolean.alarm_collector_memoria_1
-            name: Memoria centrale 1
+            name: Memoria avvio pompa
             color: amber
             tap_action:
               action: none
@@ -74,7 +74,7 @@ views:
               action: more-info
           - type: tile
             entity: input_boolean.alarm_collector_memoria_2
-            name: Memoria centrale 2
+            name: Memoria allarme centralina
             color: amber
             tap_action:
               action: none
