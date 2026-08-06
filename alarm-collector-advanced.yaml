@@ -1,7 +1,7 @@
 substitutions:
   device_name: alarm-contact-collector
   friendly_name: "Alarm Contact Collector"
-  firmware_version: "1.0.0-rc2"
+  firmware_version: "1.0.0-rc3"
   central_1_name: "Pompa anello antincendio"
   central_2_name: "Allarme centralina pompa antincendio"
   brevo_sender_email: !secret brevo_sender_email
@@ -513,6 +513,12 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
   - platform: template
+    id: direct_alarm_reminders_enabled
+    name: "Promemoria allarmi diretti"
+    icon: mdi:bell-repeat-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+  - platform: template
     id: telegram_commands_enabled
     name: "Comandi Telegram abilitati"
     icon: mdi:message-text-lock-outline
@@ -806,6 +812,38 @@ sensor:
 
 text_sensor:
   - platform: template
+    name: "${central_1_name} - Tempo in allarme"
+    icon: mdi:timer-alert-outline
+    lambda: |-
+      int64_t seconds = id(alarm_1_last_duration);
+      if (id(alarm_1).state && id(alarm_1_started) > 0) {
+        auto now = id(board_rtc).now();
+        if (now.is_valid() && now.timestamp >= id(alarm_1_started)) {
+          seconds = now.timestamp - id(alarm_1_started);
+        }
+      }
+      char value[24];
+      snprintf(value, sizeof(value), "%02lld:%02lld:%02lld",
+               seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+      return {std::string(value)};
+    update_interval: 1s
+  - platform: template
+    name: "${central_2_name} - Tempo in allarme"
+    icon: mdi:timer-alert-outline
+    lambda: |-
+      int64_t seconds = id(alarm_2_last_duration);
+      if (id(alarm_2).state && id(alarm_2_started) > 0) {
+        auto now = id(board_rtc).now();
+        if (now.is_valid() && now.timestamp >= id(alarm_2_started)) {
+          seconds = now.timestamp - id(alarm_2_started);
+        }
+      }
+      char value[24];
+      snprintf(value, sizeof(value), "%02lld:%02lld:%02lld",
+               seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+      return {std::string(value)};
+    update_interval: 1s
+  - platform: template
     name: "${central_1_name} - Stato"
     icon: mdi:shield-alert-outline
     lambda: |-
@@ -974,6 +1012,121 @@ interval:
               - lambda: return id(ethernet_ever_connected) && !id(ethernet_lost);
           then:
             - script.execute: telegram_poll
+
+  - interval: 5min
+    startup_delay: 5min
+    then:
+      - if:
+          condition:
+            and:
+              - switch.is_on: direct_alarm_reminders_enabled
+              - binary_sensor.is_on: alarm_1
+          then:
+            - lambda: |-
+                auto now = id(board_rtc).now();
+                int64_t seconds =
+                    now.is_valid() && id(alarm_1_started) > 0 &&
+                    now.timestamp >= id(alarm_1_started)
+                    ? now.timestamp - id(alarm_1_started) : 0;
+                char duration[24];
+                snprintf(duration, sizeof(duration), "%02lld:%02lld:%02lld",
+                         seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+                id(event_log).log_event("PROMEMORIA",
+                    std::string("${central_1_name} ancora avviata da ") + duration);
+            - if:
+                condition:
+                  switch.is_on: telegram_enabled
+                then:
+                  - script.execute:
+                      id: telegram_send
+                      event_name: "Pompa antincendio ancora avviata"
+                      telegram_text: !lambda |-
+                        auto now = id(board_rtc).now();
+                        int64_t seconds =
+                            now.is_valid() && id(alarm_1_started) > 0 &&
+                            now.timestamp >= id(alarm_1_started)
+                            ? now.timestamp - id(alarm_1_started) : 0;
+                        char duration[24];
+                        snprintf(duration, sizeof(duration), "%02lld:%02lld:%02lld",
+                                 seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+                        return std::string("🔥🚨 POMPA ANTINCENDIO ANCORA AVVIATA\nDurata: ") +
+                               duration + "\nPossibile incendio, manutenzione o guasto. Verificare immediatamente.";
+
+  - interval: 10min
+    startup_delay: 10min
+    then:
+      - if:
+          condition:
+            and:
+              - switch.is_on: direct_alarm_reminders_enabled
+              - binary_sensor.is_on: alarm_2
+          then:
+            - if:
+                condition:
+                  switch.is_on: telegram_enabled
+                then:
+                  - script.execute:
+                      id: telegram_send
+                      event_name: "Allarme centralina ancora attivo"
+                      telegram_text: !lambda |-
+                        auto now = id(board_rtc).now();
+                        int64_t seconds =
+                            now.is_valid() && id(alarm_2_started) > 0 &&
+                            now.timestamp >= id(alarm_2_started)
+                            ? now.timestamp - id(alarm_2_started) : 0;
+                        char duration[24];
+                        snprintf(duration, sizeof(duration), "%02lld:%02lld:%02lld",
+                                 seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+                        return std::string("🚨 ALLARME CENTRALINA POMPA ANCORA ATTIVO\nDurata: ") +
+                               duration + "\nConsultare immediatamente la centralina.";
+
+  - interval: 30min
+    startup_delay: 30min
+    then:
+      - if:
+          condition:
+            and:
+              - switch.is_on: direct_alarm_reminders_enabled
+              - switch.is_on: brevo_enabled
+          then:
+            - if:
+                condition:
+                  binary_sensor.is_on: alarm_1
+                then:
+                  - script.execute:
+                      id: brevo_send
+                      subject: "URGENTE - Pompa antincendio ancora avviata"
+                      message: !lambda |-
+                        auto now = id(board_rtc).now();
+                        int64_t seconds =
+                            now.is_valid() && id(alarm_1_started) > 0 &&
+                            now.timestamp >= id(alarm_1_started)
+                            ? now.timestamp - id(alarm_1_started) : 0;
+                        char duration[24];
+                        snprintf(duration, sizeof(duration), "%02lld:%02lld:%02lld",
+                                 seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+                        return std::string("La pompa dell'anello antincendio è ancora avviata. Durata: ") +
+                               duration + ". Possibile incendio, manutenzione o guasto. Verificare immediatamente.";
+                      event_name: "Pompa antincendio ancora avviata"
+            - if:
+                condition:
+                  binary_sensor.is_on: alarm_2
+                then:
+                  - script.execute:
+                      id: brevo_send
+                      subject: "ALLARME - Centralina pompa ancora in anomalia"
+                      message: !lambda |-
+                        auto now = id(board_rtc).now();
+                        int64_t seconds =
+                            now.is_valid() && id(alarm_2_started) > 0 &&
+                            now.timestamp >= id(alarm_2_started)
+                            ? now.timestamp - id(alarm_2_started) : 0;
+                        char duration[24];
+                        snprintf(duration, sizeof(duration), "%02lld:%02lld:%02lld",
+                                 seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+                        return std::string("L'allarme generico della centralina pompa è ancora attivo. Durata: ") +
+                               duration + ". Consultare immediatamente la centralina.";
+                      event_name: "Allarme centralina ancora attivo"
 
 script:
   - id: remote_ha_send
@@ -1545,14 +1698,15 @@ script:
           id(alarm_1_memory_value) = true;
           id(alarm_1_count_value) += 1;
           id(alarm_1_started) = now.is_valid() ? now.timestamp : 0;
+          id(alarm_1_last_duration) = 0;
           id(alarm_1_last_event_value) =
             now.is_valid() ? now.strftime("%d/%m/%Y %H:%M:%S") : "Ora non disponibile";
       - component.update: alarm_1_count
-      - lambda: id(event_log).log_event("ALLARME", "${central_1_name} attivata");
+      - lambda: id(event_log).log_event("ALLARME CRITICO", "${central_1_name} avviata");
       - script.execute:
           id: remote_ha_send
           event_name: "alarm_1_activated"
-          event_message: "Allarme attivo su ${central_1_name}"
+          event_message: "Pompa anello antincendio avviata: possibile incendio, manutenzione o guasto. Verificare immediatamente."
       - script.execute: update_status_led
       - if:
           condition:
@@ -1565,17 +1719,22 @@ script:
           then:
             - script.execute:
                 id: telegram_send
-                event_name: "Allarme 1"
-                telegram_text: "🚨 ALLARME - ${central_1_name}"
+                event_name: "Pompa antincendio avviata"
+                telegram_text: |-
+                  🔥🚨 POMPA ANELLO ANTINCENDIO AVVIATA
+                  Possibile incendio, manutenzione o guasto.
+                  Verificare immediatamente la causa sulla centralina e sull'impianto.
+                  Durata: 00:00:00
       - if:
           condition:
             switch.is_on: brevo_enabled
           then:
             - script.execute:
                 id: brevo_send
-                subject: "ALLARME - ${central_1_name}"
-                message: "Allarme attivo su ${central_1_name}."
-                event_name: "Allarme 1"
+                subject: "URGENTE - Pompa anello antincendio avviata"
+                message: "La pompa dell'anello antincendio è stata avviata. Possibile incendio, manutenzione o guasto. Verificare immediatamente. Durata: 00:00:00."
+                event_name: "Pompa antincendio avviata"
+
   - id: alarm_2_activated
     mode: restart
     then:
@@ -1584,14 +1743,15 @@ script:
           id(alarm_2_memory_value) = true;
           id(alarm_2_count_value) += 1;
           id(alarm_2_started) = now.is_valid() ? now.timestamp : 0;
+          id(alarm_2_last_duration) = 0;
           id(alarm_2_last_event_value) =
             now.is_valid() ? now.strftime("%d/%m/%Y %H:%M:%S") : "Ora non disponibile";
       - component.update: alarm_2_count
-      - lambda: id(event_log).log_event("ALLARME", "${central_2_name} attivata");
+      - lambda: id(event_log).log_event("ALLARME TECNICO", "${central_2_name} attivato");
       - script.execute:
           id: remote_ha_send
           event_name: "alarm_2_activated"
-          event_message: "Allarme attivo su ${central_2_name}"
+          event_message: "Allarme generico centralina pompa antincendio: verificare mancanza rete, bassa pressione o altra anomalia."
       - script.execute: update_status_led
       - if:
           condition:
@@ -1604,17 +1764,22 @@ script:
           then:
             - script.execute:
                 id: telegram_send
-                event_name: "Allarme 2"
-                telegram_text: "🚨 ALLARME - ${central_2_name}"
+                event_name: "Allarme centralina pompa"
+                telegram_text: |-
+                  🚨 ALLARME CENTRALINA POMPA ANTINCENDIO
+                  Possibile mancanza rete, bassa pressione o altra anomalia.
+                  Consultare immediatamente la centralina.
+                  Durata: 00:00:00
       - if:
           condition:
             switch.is_on: brevo_enabled
           then:
             - script.execute:
                 id: brevo_send
-                subject: "ALLARME - ${central_2_name}"
-                message: "Allarme attivo su ${central_2_name}."
-                event_name: "Allarme 2"
+                subject: "ALLARME - Centralina pompa antincendio"
+                message: "Allarme generico della centralina pompa antincendio. Possibile mancanza rete, bassa pressione o altra anomalia. Consultare immediatamente la centralina. Durata: 00:00:00."
+                event_name: "Allarme centralina pompa"
+
   - id: alarm_1_restored
     mode: restart
     then:
@@ -1624,11 +1789,22 @@ script:
             id(alarm_1_last_duration) = now.timestamp - id(alarm_1_started);
           }
           id(alarm_1_started) = 0;
-      - lambda: id(event_log).log_event("RIPRISTINO", "${central_1_name} ripristinata");
+      - lambda: |-
+          char duration[24];
+          int seconds = id(alarm_1_last_duration);
+          snprintf(duration, sizeof(duration), "%02d:%02d:%02d",
+                   seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+          id(event_log).log_event("RIPRISTINO",
+              std::string("${central_1_name} arrestata. Durata totale: ") + duration);
       - script.execute:
           id: remote_ha_send
           event_name: "alarm_1_restored"
-          event_message: "Allarme ripristinato su ${central_1_name}"
+          event_message: !lambda |-
+            char duration[24];
+            int seconds = id(alarm_1_last_duration);
+            snprintf(duration, sizeof(duration), "%02d:%02d:%02d",
+                     seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+            return std::string("Pompa anello antincendio arrestata. Durata totale: ") + duration;
       - script.execute: update_status_led
       - if:
           condition:
@@ -1636,17 +1812,30 @@ script:
           then:
             - script.execute:
                 id: telegram_send
-                event_name: "Ripristino 1"
-                telegram_text: "✅ RIPRISTINO - ${central_1_name}"
+                event_name: "Pompa antincendio arrestata"
+                telegram_text: !lambda |-
+                  char duration[24];
+                  int seconds = id(alarm_1_last_duration);
+                  snprintf(duration, sizeof(duration), "%02d:%02d:%02d",
+                           seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+                  return std::string("✅ POMPA ANELLO ANTINCENDIO ARRESTATA\nDurata totale: ") +
+                         duration + "\nVerificare e registrare la causa dell'avviamento.";
       - if:
           condition:
             switch.is_on: brevo_enabled
           then:
             - script.execute:
                 id: brevo_send
-                subject: "RIPRISTINO - ${central_1_name}"
-                message: "Allarme ripristinato su ${central_1_name}."
-                event_name: "Ripristino 1"
+                subject: "RIPRISTINO - Pompa anello antincendio arrestata"
+                message: !lambda |-
+                  char duration[24];
+                  int seconds = id(alarm_1_last_duration);
+                  snprintf(duration, sizeof(duration), "%02d:%02d:%02d",
+                           seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+                  return std::string("La pompa dell'anello antincendio è stata arrestata. Durata totale: ") +
+                         duration + ". Verificare e registrare la causa dell'avviamento.";
+                event_name: "Pompa antincendio arrestata"
+
   - id: alarm_2_restored
     mode: restart
     then:
@@ -1656,11 +1845,22 @@ script:
             id(alarm_2_last_duration) = now.timestamp - id(alarm_2_started);
           }
           id(alarm_2_started) = 0;
-      - lambda: id(event_log).log_event("RIPRISTINO", "${central_2_name} ripristinata");
+      - lambda: |-
+          char duration[24];
+          int seconds = id(alarm_2_last_duration);
+          snprintf(duration, sizeof(duration), "%02d:%02d:%02d",
+                   seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+          id(event_log).log_event("RIPRISTINO",
+              std::string("${central_2_name} ripristinato. Durata totale: ") + duration);
       - script.execute:
           id: remote_ha_send
           event_name: "alarm_2_restored"
-          event_message: "Allarme ripristinato su ${central_2_name}"
+          event_message: !lambda |-
+            char duration[24];
+            int seconds = id(alarm_2_last_duration);
+            snprintf(duration, sizeof(duration), "%02d:%02d:%02d",
+                     seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+            return std::string("Allarme centralina pompa ripristinato. Durata totale: ") + duration;
       - script.execute: update_status_led
       - if:
           condition:
@@ -1668,17 +1868,29 @@ script:
           then:
             - script.execute:
                 id: telegram_send
-                event_name: "Ripristino 2"
-                telegram_text: "✅ RIPRISTINO - ${central_2_name}"
+                event_name: "Allarme centralina ripristinato"
+                telegram_text: !lambda |-
+                  char duration[24];
+                  int seconds = id(alarm_2_last_duration);
+                  snprintf(duration, sizeof(duration), "%02d:%02d:%02d",
+                           seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+                  return std::string("✅ ALLARME CENTRALINA POMPA RIPRISTINATO\nDurata totale: ") +
+                         duration + "\nVerificare comunque lo storico della centralina.";
       - if:
           condition:
             switch.is_on: brevo_enabled
           then:
             - script.execute:
                 id: brevo_send
-                subject: "RIPRISTINO - ${central_2_name}"
-                message: "Allarme ripristinato su ${central_2_name}."
-                event_name: "Ripristino 2"
+                subject: "RIPRISTINO - Centralina pompa antincendio"
+                message: !lambda |-
+                  char duration[24];
+                  int seconds = id(alarm_2_last_duration);
+                  snprintf(duration, sizeof(duration), "%02d:%02d:%02d",
+                           seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+                  return std::string("Allarme generico della centralina pompa ripristinato. Durata totale: ") +
+                         duration + ". Verificare comunque lo storico della centralina.";
+                event_name: "Allarme centralina ripristinato"
 
   - id: update_status_led
     mode: restart
