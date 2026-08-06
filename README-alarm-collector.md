@@ -3,10 +3,12 @@
 Firmware ESPHome per raccogliere allarmi a contatto pulito da due centrali,
 espandibile fino a otto ingressi, sulla Waveshare ESP32-S3-POE-ETH-8DI-8RO.
 
-## Funzioni della versione 1.0.0-rc2
+## Funzioni della versione 1.0.0-rc3
 
 - due centrali configurabili NO/NC da Home Assistant;
-- ingresso attivo, memoria allarme, ultimo evento, durata e contatore;
+- ingresso attivo, memoria allarme, ultimo evento, durata numerica e tempo
+  formattato HH:MM:SS aggiornato ogni secondo;
+- durata inclusa nei ripristini e nei promemoria diretti Telegram/Brevo;
 - esclusione individuale per manutenzione;
 - buzzer tacitabile e LED RGB di stato;
 - RTC locale e funzionamento anche senza Home Assistant;
