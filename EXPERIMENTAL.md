@@ -34,6 +34,15 @@ compilazione e test reali sulla Waveshare ESP32-S3-POE-ETH-8DI-8RO.
 - protezione da duplicazioni, replay e richieste troppo frequenti;
 - mantenimento del funzionamento locale in assenza di servizi esterni.
 
+## Notifiche Home Assistant antincendio
+
+- DI1 notificato come avvio/arresto della pompa dell'anello antincendio;
+- DI2 notificato come allarme/ripristino generico della centralina pompa;
+- promemoria ripetuti finché i contatti rimangono attivi;
+- avviso di perdita e ripristino del concentratore;
+- notifica persistente sempre disponibile e servizio push configurabile;
+- interruttore generale per disabilitare gli avvisi Home Assistant.
+
 ## Regole di sicurezza
 
 - nessun token, URL privato o chiave nel repository;
