@@ -162,3 +162,32 @@ alarm_collector_payload_token: "TOKEN_PAYLOAD_LUNGO_E_CASUALE"
 Il token deve coincidere con `ha_remote_1_webhook_token` oppure
 `ha_remote_2_webhook_token` del firmware, secondo la destinazione. Il package
 rifiuta i payload con dispositivo o token non validi.
+
+
+## Notifiche Home Assistant per la pompa antincendio
+
+Il package opzionale
+`home-assistant/packages/alarm_contact_collector_notifications.yaml` assegna
+questi significati agli ingressi:
+
+| Ingresso | Segnalazione |
+| --- | --- |
+| DI1 | Pompa anello antincendio avviata |
+| DI2 | Allarme generico centralina pompa: mancanza rete, bassa pressione o altra anomalia |
+
+Il package invia l'attivazione e il ripristino, ripete ogni 30 minuti l'avviso
+della pompa ancora attiva, ogni 10 minuti l'allarme tecnico ancora presente e
+segnala l'assenza del concentratore dopo 15 minuti. Le notifiche possono essere
+disabilitate tramite l'interruttore `Alarm Collector - Notifiche Home Assistant`.
+
+Copiare il package accanto a quello ricevitore e aggiungere al `secrets.yaml`
+di Home Assistant:
+
+```yaml
+alarm_collector_notify_service: "notify.mobile_app_nome_telefono"
+```
+
+Per più destinatari è consigliato creare un gruppo di notifica Home Assistant
+chiamato, per esempio, `notify.alarm_collector` e usare quel servizio nel
+secret. Impostando `notify.persistent_notification` gli avvisi rimangono
+soltanto nell'interfaccia Home Assistant.
