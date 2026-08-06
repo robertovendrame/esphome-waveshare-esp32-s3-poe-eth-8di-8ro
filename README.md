@@ -21,7 +21,7 @@ saranno progettate funzioni di comando specifiche e sicure.
 - invio affidabile a due istanze Home Assistant mediante webhook autenticati;
 - heartbeat, ritentativi e code indipendenti dopo blackout o assenza Internet.
 
-Versione firmware corrente: **1.0.0-rc2**.
+Versione firmware corrente: **1.0.0-rc3**.
 
 ## File principali
 
@@ -46,7 +46,7 @@ Versione firmware corrente: **1.0.0-rc2**.
    ```
 
 Il passaggio diretto da una versione precedente, inclusa la `0.8.0`, alla
-`1.0.0-rc2` è supportato. Gli aggiornamenti successivi possono essere eseguiti
+`1.0.0-rc3` è supportato. Gli aggiornamenti successivi possono essere eseguiti
 normalmente tramite ESPHome OTA.
 
 ## Collegamenti iniziali
