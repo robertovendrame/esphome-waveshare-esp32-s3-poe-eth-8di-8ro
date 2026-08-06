@@ -1,0 +1,38 @@
+# Copiare questo file in /config/esphome/ e rinominarlo, per esempio:
+# alarm-contact-collector.yaml
+#
+# Il firmware viene scaricato da GitHub e compilato localmente da ESPHome.
+# Tutte le credenziali restano nel secrets.yaml locale.
+
+substitutions:
+  device_name: alarm-contact-collector
+  friendly_name: "Alarm Contact Collector"
+  github_ref: "experimental"
+
+  api_encryption_key: !secret api_encryption_key
+  ota_password: !secret ota_password
+
+  telegram_send_url: !secret telegram_send_url
+  telegram_updates_url: !secret telegram_updates_url
+  telegram_authorized_chat_id: !secret telegram_chat_id
+  telegram_authorized_group_id: !secret telegram_authorized_group_id
+  telegram_admin_user_ids: !secret telegram_admin_user_ids
+
+  ha_remote_1_webhook_url: !secret ha_remote_1_webhook_url
+  ha_remote_2_webhook_url: !secret ha_remote_2_webhook_url
+  ha_remote_1_webhook_token: !secret ha_remote_1_webhook_token
+  ha_remote_2_webhook_token: !secret ha_remote_2_webhook_token
+
+  brevo_api_key: !secret brevo_api_key
+  brevo_sender_email: !secret brevo_sender_email
+  brevo_sender_name: !secret brevo_sender_name
+  brevo_recipient_email: !secret brevo_recipient_email
+  brevo_recipient_name: !secret brevo_recipient_name
+
+packages:
+  waveshare_alarm_collector:
+    url: https://github.com/robertovendrame/waveshare-alarm-collector
+    ref: experimental
+    refresh: 5min
+    files:
+      - alarm-collector-advanced.yaml
