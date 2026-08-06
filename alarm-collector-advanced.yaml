@@ -1426,24 +1426,58 @@ script:
                           std::string reply;
                           if (command == "/stato") {
                             uint32_t uptime = millis() / 1000;
-                            char value[320];
+                            auto now = id(board_rtc).now();
+                            int64_t duration_1 = id(alarm_1_last_duration);
+                            int64_t duration_2 = id(alarm_2_last_duration);
+                            if (id(alarm_1).state && id(alarm_1_started) > 0 &&
+                                now.is_valid() && now.timestamp >= id(alarm_1_started)) {
+                              duration_1 = now.timestamp - id(alarm_1_started);
+                            }
+                            if (id(alarm_2).state && id(alarm_2_started) > 0 &&
+                                now.is_valid() && now.timestamp >= id(alarm_2_started)) {
+                              duration_2 = now.timestamp - id(alarm_2_started);
+                            }
+                            char time_1[24], time_2[24], value[512];
+                            snprintf(time_1, sizeof(time_1), "%02lld:%02lld:%02lld",
+                                     duration_1 / 3600, (duration_1 % 3600) / 60, duration_1 % 60);
+                            snprintf(time_2, sizeof(time_2), "%02lld:%02lld:%02lld",
+                                     duration_2 / 3600, (duration_2 % 3600) / 60, duration_2 % 60);
                             snprintf(value, sizeof(value),
-                                     "📟 STATO CONCENTRATORE\nCentrale 1: %s\nCentrale 2: %s\nMemoria 1: %s\nMemoria 2: %s\nHome Assistant: %s\nUptime: %lu s",
-                                     id(alarm_1).state ? "ALLARME" : "normale",
-                                     id(alarm_2).state ? "ALLARME" : "normale",
+                                     "📟 STATO CONCENTRATORE\n🔥 Pompa antincendio: %s\nTempo: %s\n🚨 Allarme centralina: %s\nTempo: %s\nMemoria pompa: %s\nMemoria centralina: %s\nHome Assistant: %s\nUptime: %lu s",
+                                     id(alarm_1).state ? "ALLARME - VERIFICARE SUBITO" : "normale",
+                                     time_1,
+                                     id(alarm_2).state ? "ALLARME - VERIFICARE SUBITO" : "normale",
+                                     time_2,
                                      id(alarm_1_memory_value) ? "presente" : "vuota",
                                      id(alarm_2_memory_value) ? "presente" : "vuota",
                                      id(native_api).is_connected() ? "collegato" : "scollegato",
                                      static_cast<unsigned long>(uptime));
                             reply = value;
                           } else if (command == "/allarmi") {
-                            char value[320];
+                            auto now = id(board_rtc).now();
+                            int64_t duration_1 = id(alarm_1_last_duration);
+                            int64_t duration_2 = id(alarm_2_last_duration);
+                            if (id(alarm_1).state && id(alarm_1_started) > 0 &&
+                                now.is_valid() && now.timestamp >= id(alarm_1_started)) {
+                              duration_1 = now.timestamp - id(alarm_1_started);
+                            }
+                            if (id(alarm_2).state && id(alarm_2_started) > 0 &&
+                                now.is_valid() && now.timestamp >= id(alarm_2_started)) {
+                              duration_2 = now.timestamp - id(alarm_2_started);
+                            }
+                            char time_1[24], time_2[24], value[640];
+                            snprintf(time_1, sizeof(time_1), "%02lld:%02lld:%02lld",
+                                     duration_1 / 3600, (duration_1 % 3600) / 60, duration_1 % 60);
+                            snprintf(time_2, sizeof(time_2), "%02lld:%02lld:%02lld",
+                                     duration_2 / 3600, (duration_2 % 3600) / 60, duration_2 % 60);
                             snprintf(value, sizeof(value),
-                                     "🚨 ALLARMI\nCentrale 1: %s - conteggio %d\nUltimo evento 1: %s\nCentrale 2: %s - conteggio %d\nUltimo evento 2: %s",
-                                     id(alarm_1).state ? "ATTIVO" : "normale",
-                                     id(alarm_1_count_value), id(alarm_1_last_event_value).c_str(),
-                                     id(alarm_2).state ? "ATTIVO" : "normale",
-                                     id(alarm_2_count_value), id(alarm_2_last_event_value).c_str());
+                                     "🚨 ALLARMI ANTINCENDIO\n🔥 Pompa: %s\nDurata: %s - conteggio %d\nUltimo evento: %s\n🚨 Centralina: %s\nDurata: %s - conteggio %d\nUltimo evento: %s",
+                                     id(alarm_1).state ? "ATTIVA - POSSIBILE EMERGENZA" : "normale",
+                                     time_1, id(alarm_1_count_value),
+                                     id(alarm_1_last_event_value).c_str(),
+                                     id(alarm_2).state ? "ALLARME ATTIVO" : "normale",
+                                     time_2, id(alarm_2_count_value),
+                                     id(alarm_2_last_event_value).c_str());
                             reply = value;
                           } else if (command == "/rete") {
                             std::string local_ip = id(ethernet_ip).state;
