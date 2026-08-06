@@ -30,16 +30,16 @@ input_text:
 
 input_boolean:
   alarm_collector_allarme_1:
-    name: Alarm Collector - Allarme 1
+    name: Pompa anello antincendio avviata
     icon: mdi:alarm-light
   alarm_collector_allarme_2:
-    name: Alarm Collector - Allarme 2
+    name: Allarme centralina pompa antincendio
     icon: mdi:alarm-light
   alarm_collector_memoria_1:
-    name: Alarm Collector - Memoria 1
+    name: Memoria avvio pompa antincendio
     icon: mdi:alert-decagram-outline
   alarm_collector_memoria_2:
-    name: Alarm Collector - Memoria 2
+    name: Memoria allarme centralina pompa
     icon: mdi:alert-decagram-outline
 
 counter:
